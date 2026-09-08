@@ -89,14 +89,28 @@ export function publicOrder(order, { includeCustomer = false } = {}) {
       lineDeliveryFee: item.lineDeliveryFee,
     })),
     subtotal: order.subtotal,
+    discount: order.discount || 0,
     delivery: order.deliveryFee,
     deliveryFee: order.deliveryFee,
     total: order.total,
+    promotionCode: order.promotion?.code || "",
     paymentMethod: order.payment.method,
     paymentStatus: order.payment.status,
     status: order.status,
+    statusHistory: (order.statusHistory || []).map((entry) => ({
+      status: entry.status,
+      changedAt: entry.changedAt,
+    })),
     createdAt: order.createdAt,
   };
-  if (includeCustomer) result.customer = order.customer;
+  if (includeCustomer) {
+    result.customer = order.customer;
+    result.notification = {
+      sentAt: order.notification?.sentAt || null,
+      lastError: order.notification?.lastError || "",
+      statusSentAt: order.notification?.statusSentAt || null,
+      statusLastError: order.notification?.statusLastError || "",
+    };
+  }
   return result;
 }

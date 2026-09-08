@@ -2,8 +2,13 @@ import { randomBytes } from "node:crypto";
 import mongoose from "mongoose";
 import { Order } from "../models/Order.js";
 import { Product } from "../models/Product.js";
+import { Promotion } from "../models/Promotion.js";
 import { env } from "../config/env.js";
 import { sign, verifySignature } from "../utils/crypto.js";
+import {
+  publicPromotion,
+  resolvePromotion,
+} from "./promotionService.js";
 import {
   cleanEmail,
   cleanInteger,
@@ -42,22 +47,35 @@ export function calculateQuote(cartItems, products) {
     });
   }
 
+  const requestedByProduct = new Map();
+  for (const entry of combined.values()) {
+    requestedByProduct.set(
+      entry.productId,
+      (requestedByProduct.get(entry.productId) || 0) + entry.quantity,
+    );
+  }
+  for (const [productId, requested] of requestedByProduct) {
+    const product = productMap.get(productId);
+    if (!product || !product.active) {
+      throw new HttpError(409, "A product in your bag is no longer available.");
+    }
+    if (product.stock < requested) {
+      throw new HttpError(
+        409,
+        `Only ${product.stock} ${product.name} pair(s) remain across your selected sizes.`,
+      );
+    }
+  }
+
   const items = [];
   for (const entry of combined.values()) {
     if (entry.quantity > 10)
       throw new HttpError(400, "A maximum of 10 pairs is allowed per size.");
     const product = productMap.get(entry.productId);
-    if (!product || !product.active)
-      throw new HttpError(409, "A product in your bag is no longer available.");
     if (!product.sizes.includes(entry.size))
       throw new HttpError(
         409,
         `${product.name} is unavailable in size ${entry.size}.`,
-      );
-    if (product.stock < entry.quantity)
-      throw new HttpError(
-        409,
-        `Only ${product.stock} ${product.name} pair(s) remain.`,
       );
     const lineSubtotal = Math.round(product.price) * entry.quantity;
     const lineDeliveryFee =
@@ -90,7 +108,57 @@ export function calculateQuote(cartItems, products) {
   };
 }
 
-export async function quoteCart(cartItems) {
+export function inventoryRequirements(items) {
+  const requirements = new Map();
+  for (const item of items || []) {
+    const productId = String(item.product?._id || item.product || "");
+    requirements.set(
+      productId,
+      (requirements.get(productId) || 0) + Number(item.quantity || 0),
+    );
+  }
+  return Array.from(requirements, ([product, quantity]) => ({
+    product,
+    quantity,
+  }));
+}
+
+async function commitInventory(items, session) {
+  const committed = [];
+  for (const item of inventoryRequirements(items)) {
+    const result = await Product.updateOne(
+      { _id: item.product, active: true, stock: { $gte: item.quantity } },
+      { $inc: { stock: -item.quantity } },
+      session ? { session } : undefined,
+    );
+    if (result.modifiedCount !== 1) {
+      for (const entry of committed) {
+        await Product.updateOne(
+          { _id: entry.product },
+          { $inc: { stock: entry.quantity } },
+          session ? { session } : undefined,
+        );
+      }
+      return false;
+    }
+    committed.push(item);
+  }
+  return true;
+}
+
+async function runAtomic(work) {
+  if (!env.mongodbTransactions) return work(null);
+  return mongoose.connection.transaction(work, {
+    readPreference: "primary",
+    readConcern: { level: "snapshot" },
+    writeConcern: { w: "majority" },
+  });
+}
+
+export async function quoteCart(cartItems, promotionCode = "") {
+  if (!Array.isArray(cartItems) || cartItems.length < 1 || cartItems.length > 20) {
+    return calculateQuote(cartItems, []);
+  }
   const ids = Array.from(
     new Set(cartItems.map((item) => String(item.productId || ""))),
   );
@@ -98,7 +166,15 @@ export async function quoteCart(cartItems) {
     throw new HttpError(400, "Your bag contains an invalid product.");
   }
   const products = await Product.find({ _id: { $in: ids }, active: true });
-  return calculateQuote(cartItems, products);
+  const quote = calculateQuote(cartItems, products);
+  const resolved = await resolvePromotion(promotionCode, quote.subtotal);
+  if (!resolved) return { ...quote, discount: 0, promotion: null };
+  return {
+    ...quote,
+    discount: resolved.discount,
+    total: quote.total - resolved.discount,
+    promotion: publicPromotion(resolved.promotion, resolved.discount),
+  };
 }
 
 function reference() {
@@ -130,8 +206,9 @@ export async function createPendingOrder({
   customer,
   cartItems,
   paymentMethod = "online",
+  promotionCode = "",
 }) {
-  const quote = await quoteCart(cartItems);
+  const quote = await quoteCart(cartItems, promotionCode);
   const orderReference = reference();
   const paymentReference = `${orderReference}-${randomBytes(3).toString("hex")}`;
   return Order.create({
@@ -139,9 +216,18 @@ export async function createPendingOrder({
     customer: cleanCustomer(customer),
     items: quote.items,
     subtotal: quote.subtotal,
+    discount: quote.discount,
     deliveryFee: quote.deliveryFee,
     total: quote.total,
     currency: quote.currency,
+    promotion: quote.promotion
+      ? {
+          promotion: quote.promotion.id,
+          code: quote.promotion.code,
+          type: quote.promotion.type,
+          value: quote.promotion.value,
+        }
+      : undefined,
     payment: {
       provider: env.paymentMode,
       method: cleanText(paymentMethod, {
@@ -172,88 +258,163 @@ export function verifyDemoPaymentToken(token, reference) {
 }
 
 export function createOrderAccessToken(order) {
-  return `${order.reference}.${sign(`order:${order.reference}`, env.sessionSecret)}`;
+  const issuedAt = Math.floor(Date.now() / 1_000);
+  const payload = `order:${order.reference}:${issuedAt}`;
+  return `${order.reference}.${issuedAt}.${sign(payload, env.sessionSecret)}`;
 }
 
 export function verifyOrderAccessToken(token, reference) {
   const value = String(token || "");
-  const index = value.lastIndexOf(".");
-  if (index < 1 || value.slice(0, index) !== reference) return false;
+  const signatureIndex = value.lastIndexOf(".");
+  const issuedAtIndex = value.lastIndexOf(".", signatureIndex - 1);
+  if (issuedAtIndex < 1 || signatureIndex <= issuedAtIndex) return false;
+  if (value.slice(0, issuedAtIndex) !== reference) return false;
+  const issuedAt = Number(value.slice(issuedAtIndex + 1, signatureIndex));
+  const now = Math.floor(Date.now() / 1_000);
+  const maxAge = env.orderAccessTtlHours * 60 * 60;
+  if (!Number.isInteger(issuedAt) || issuedAt > now + 300 || now - issuedAt > maxAge) {
+    return false;
+  }
   return verifySignature(
-    `order:${reference}`,
-    value.slice(index + 1),
+    `order:${reference}:${issuedAt}`,
+    value.slice(signatureIndex + 1),
     env.sessionSecret,
   );
 }
 
-export async function finalizePaidOrder(order, providerData = {}) {
-  if (order.payment.status === "paid") return { order, alreadyPaid: true };
+export async function finalizePaidOrder(inputOrder, providerData = {}) {
+  if (inputOrder.payment.status === "paid") {
+    return { order: inputOrder, alreadyPaid: true };
+  }
 
-  const staleBefore = new Date(Date.now() - 5 * 60_000);
-  const claimed = await Order.findOneAndUpdate(
-    {
-      _id: order._id,
-      $or: [
-        { "payment.status": { $in: ["pending", "failed"] } },
-        {
-          "payment.status": "processing",
-          "payment.processingAt": { $lt: staleBefore },
-        },
-      ],
-    },
-    {
-      $set: {
-        "payment.status": "processing",
-        "payment.processingAt": new Date(),
+  const result = await runAtomic(async (session) => {
+    const staleBefore = new Date(Date.now() - 5 * 60_000);
+    const claimed = await Order.findOneAndUpdate(
+      {
+        _id: inputOrder._id,
+        $or: [
+          { "payment.status": { $in: ["pending", "failed"] } },
+          {
+            "payment.status": "processing",
+            "payment.processingAt": { $lt: staleBefore },
+          },
+        ],
       },
-    },
-    { new: true },
-  ).select("+payment.providerResponse +payment.authorizationCode");
+      {
+        $set: {
+          "payment.status": "processing",
+          "payment.processingAt": new Date(),
+        },
+      },
+      { new: true, ...(session ? { session } : {}) },
+    ).select("+payment.providerResponse +payment.authorizationCode");
 
-  if (!claimed) {
-    const current = await Order.findById(order._id);
-    return { order: current || order, alreadyPaid: true };
-  }
-  order = claimed;
-
-  const committed = [];
-  let inventoryOk = true;
-  for (const item of order.items) {
-    const result = await Product.updateOne(
-      { _id: item.product, active: true, stock: { $gte: item.quantity } },
-      { $inc: { stock: -item.quantity } },
-    );
-    if (result.modifiedCount !== 1) {
-      inventoryOk = false;
-      break;
+    if (!claimed) {
+      const currentQuery = Order.findById(inputOrder._id);
+      if (session) currentQuery.session(session);
+      const current = await currentQuery;
+      return { order: current || inputOrder, alreadyPaid: true };
     }
-    committed.push(item);
-  }
 
-  if (!inventoryOk) {
-    await Promise.all(
-      committed.map((item) =>
-        Product.updateOne(
-          { _id: item.product },
-          { $inc: { stock: item.quantity } },
-        ),
-      ),
-    );
-  }
+    const inventoryOk = await commitInventory(claimed.items, session);
+    claimed.payment.status = "paid";
+    claimed.payment.channel =
+      providerData.channel || (env.paymentMode === "demo" ? "demo" : "");
+    claimed.payment.authorizationCode =
+      providerData.authorization?.authorization_code || "";
+    claimed.payment.paidAt = providerData.paid_at
+      ? new Date(providerData.paid_at)
+      : new Date();
+    claimed.payment.providerResponse = providerData;
+    claimed.payment.processingAt = undefined;
+    claimed.status = inventoryOk ? "New" : "Needs review";
+    claimed.statusHistory.push({ status: claimed.status, changedBy: "payment" });
+    if (inventoryOk) claimed.inventoryCommittedAt = new Date();
+    if (claimed.promotion?.promotion && !claimed.promotionCommittedAt) {
+      await Promotion.updateOne(
+        { _id: claimed.promotion.promotion },
+        { $inc: { usedCount: 1 } },
+        session ? { session } : undefined,
+      );
+      claimed.promotionCommittedAt = new Date();
+    }
+    await claimed.save(session ? { session } : undefined);
+    return { order: claimed, alreadyPaid: false };
+  });
+  result.order?.$session?.(null);
+  return result;
+}
 
-  order.payment.status = "paid";
-  order.payment.channel =
-    providerData.channel || (env.paymentMode === "demo" ? "demo" : "");
-  order.payment.authorizationCode =
-    providerData.authorization?.authorization_code || "";
-  order.payment.paidAt = providerData.paid_at
-    ? new Date(providerData.paid_at)
-    : new Date();
-  order.payment.providerResponse = providerData;
-  order.payment.processingAt = undefined;
-  order.status = inventoryOk ? "New" : "Needs review";
-  order.statusHistory.push({ status: order.status, changedBy: "payment" });
-  if (inventoryOk) order.inventoryCommittedAt = new Date();
-  await order.save();
-  return { order, alreadyPaid: false };
+export async function updateFulfilmentStatus(inputOrder, status, changedBy) {
+  const updated = await runAtomic(async (session) => {
+    let order = inputOrder;
+    if (session) {
+      order = await Order.findById(inputOrder._id).session(session);
+      if (!order) throw new HttpError(404, "Order not found.");
+    }
+    if (order.status === status) return order;
+    if (order.status === "Cancelled") {
+      throw new HttpError(409, "A cancelled order cannot be reopened.");
+    }
+    if (
+      order.payment.status !== "paid" &&
+      !["Awaiting payment", "Cancelled", "Needs review"].includes(status)
+    ) {
+      throw new HttpError(
+        409,
+        "Payment must be confirmed before fulfilment begins.",
+      );
+    }
+    if (order.payment.status === "paid" && status === "Awaiting payment") {
+      throw new HttpError(409, "A paid order cannot return to awaiting payment.");
+    }
+
+    if (
+      order.payment.status === "paid" &&
+      !order.inventoryCommittedAt &&
+      !["Cancelled", "Needs review"].includes(status)
+    ) {
+      const inventoryOk = await commitInventory(order.items, session);
+      if (!inventoryOk) {
+        throw new HttpError(
+          409,
+          "Stock is still unavailable. Restock the affected product or cancel the order.",
+        );
+      }
+      order.inventoryCommittedAt = new Date();
+    }
+
+    if (
+      status === "Cancelled" &&
+      order.inventoryCommittedAt &&
+      !order.inventoryReleasedAt
+    ) {
+      const claimed = await Order.findOneAndUpdate(
+        {
+          _id: order._id,
+          inventoryCommittedAt: { $exists: true },
+          inventoryReleasedAt: { $exists: false },
+        },
+        { $set: { inventoryReleasedAt: new Date() } },
+        { new: true, ...(session ? { session } : {}) },
+      );
+      if (claimed) {
+        for (const item of inventoryRequirements(claimed.items)) {
+          await Product.updateOne(
+            { _id: item.product },
+            { $inc: { stock: item.quantity } },
+            session ? { session } : undefined,
+          );
+        }
+        order.inventoryReleasedAt = claimed.inventoryReleasedAt;
+      }
+    }
+
+    order.status = status;
+    order.statusHistory.push({ status, changedBy });
+    await order.save(session ? { session } : undefined);
+    return order;
+  });
+  updated?.$session?.(null);
+  return updated;
 }

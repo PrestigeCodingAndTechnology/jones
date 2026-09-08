@@ -1,16 +1,18 @@
 {
   "name": "jones-kicks-ecommerce",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "description": "Jones Kicks premium ecommerce storefront and administration backend",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "start:seeded": "node src/scripts/seed.js && node server.js",
     "dev": "node --watch server.js",
     "seed": "node src/scripts/seed.js",
     "test": "node --test",
-    "check": "node scripts/check-project.js"
+    "check": "node scripts/check-project.js",
+    "verify": "npm run check && npm test && npm audit --omit=dev"
   },
   "engines": {
     "node": ">=20.19.0"
@@ -20,6 +22,6 @@
     "ejs": "^6.0.1",
     "express": "^5.2.1",
     "mongoose": "^9.9.4",
-    "nodemailer": "^9.0.6"
+    "nodemailer": "^9.1.1"
   }
 }

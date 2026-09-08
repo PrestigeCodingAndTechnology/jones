@@ -87,7 +87,8 @@ async function seed() {
     await Product.findOneAndUpdate(
       { slug },
       {
-        $set: {
+        $setOnInsert: {
+          slug,
           name,
           category,
           price,
@@ -99,9 +100,6 @@ async function seed() {
           sizes: [40, 41, 42, 43, 44, 45],
           description,
           active: true,
-        },
-        $setOnInsert: {
-          slug,
           stock: 12,
           featured: catalogue.findIndex((item) => item[0] === name) < 8,
           views: 0,
@@ -111,11 +109,21 @@ async function seed() {
     );
   }
 
+  if (
+    process.env.NODE_ENV === "production" &&
+    (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD)
+  ) {
+    throw new Error("ADMIN_EMAIL and ADMIN_PASSWORD are required in production.");
+  }
   const adminEmail = String(
     process.env.ADMIN_EMAIL || "admin@joneskick.com",
   ).toLowerCase();
   const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
-  if (process.env.NODE_ENV === "production" && adminPassword.length < 12) {
+  if (
+    process.env.NODE_ENV === "production" &&
+    (adminPassword.length < 12 ||
+      ["admin123", "change-this-before-production"].includes(adminPassword))
+  ) {
     throw new Error(
       "ADMIN_PASSWORD must contain at least 12 characters in production.",
     );
@@ -137,6 +145,11 @@ async function seed() {
         key: "primary",
         storeName: "Jones Kicks",
         phone: "0905 857 9374",
+        whatsappUrl: "https://wa.me/message/6BIGK72XFX23L1",
+        instagramUrl: "https://www.instagram.com/teejonesonly",
+        instagramHandle: "@teejonesonly",
+        tiktokUrl: "https://www.tiktok.com/@tee_jones247",
+        tiktokHandle: "@tee_jones247",
         notificationEmail: process.env.ORDER_NOTIFICATION_EMAIL || "",
         orderAlerts: true,
         viewTracking: true,

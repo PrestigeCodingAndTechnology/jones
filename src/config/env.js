@@ -9,12 +9,15 @@ const asBoolean = (value, fallback = false) => {
 };
 
 const nodeEnv = process.env.NODE_ENV || "development";
-const sessionSecret =
-  process.env.SESSION_SECRET || "development-only-change-this-session-secret";
+const defaultSessionSecret = "development-only-change-this-session-secret";
+const sessionSecret = process.env.SESSION_SECRET || defaultSessionSecret;
 const paymentMode =
   process.env.PAYMENT_MODE === "paystack" ? "paystack" : "demo";
 
-if (nodeEnv === "production" && sessionSecret.length < 32) {
+if (
+  nodeEnv === "production" &&
+  (sessionSecret.length < 32 || sessionSecret === defaultSessionSecret)
+) {
   throw new Error(
     "SESSION_SECRET must contain at least 32 characters in production.",
   );
@@ -25,6 +28,30 @@ if (nodeEnv === "production" && paymentMode !== "paystack") {
 if (nodeEnv === "production" && !process.env.PAYSTACK_SECRET_KEY) {
   throw new Error("PAYSTACK_SECRET_KEY is required in production.");
 }
+if (nodeEnv === "production") {
+  for (const name of [
+    "SMTP_HOST",
+    "SMTP_USER",
+    "SMTP_PASS",
+    "ORDER_NOTIFICATION_EMAIL",
+  ]) {
+    if (!process.env[name]) throw new Error(`${name} is required in production.`);
+  }
+  for (const [name, value] of [
+    ["APP_URL", process.env.APP_URL],
+    ["PAYSTACK_CALLBACK_URL", process.env.PAYSTACK_CALLBACK_URL],
+  ]) {
+    let url;
+    try {
+      url = new URL(String(value || ""));
+    } catch {
+      throw new Error(`${name} must be a public HTTPS URL in production.`);
+    }
+    if (url.protocol !== "https:" || !url.hostname) {
+      throw new Error(`${name} must be a public HTTPS URL in production.`);
+    }
+  }
+}
 
 export const env = Object.freeze({
   nodeEnv,
@@ -34,8 +61,13 @@ export const env = Object.freeze({
   appUrl: (process.env.APP_URL || "http://localhost:5000").replace(/\/$/, ""),
   mongodbUri:
     process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/jones_kicks",
+  mongodbTransactions: asBoolean(
+    process.env.MONGODB_TRANSACTIONS,
+    nodeEnv === "production",
+  ),
   sessionSecret,
   sessionTtlHours: asNumber(process.env.SESSION_TTL_HOURS, 24),
+  orderAccessTtlHours: asNumber(process.env.ORDER_ACCESS_TTL_HOURS, 720),
   trustProxy: asNumber(process.env.TRUST_PROXY, 0),
   maxUploadBytes: asNumber(process.env.MAX_UPLOAD_BYTES, 1_572_864),
   paymentMode,

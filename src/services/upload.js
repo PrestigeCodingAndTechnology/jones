@@ -12,6 +12,33 @@ const allowed = new Map([
   ["image/webp", ".webp"],
 ]);
 
+export function matchesImageSignature(buffer, mimeType) {
+  if (mimeType === "image/jpeg") {
+    return (
+      buffer.length > 3 &&
+      buffer[0] === 0xff &&
+      buffer[1] === 0xd8 &&
+      buffer[2] === 0xff
+    );
+  }
+  if (mimeType === "image/png") {
+    return (
+      buffer.length > 8 &&
+      buffer
+        .subarray(0, 8)
+        .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    );
+  }
+  if (mimeType === "image/webp") {
+    return (
+      buffer.length > 12 &&
+      buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+      buffer.subarray(8, 12).toString("ascii") === "WEBP"
+    );
+  }
+  return false;
+}
+
 export async function saveProductImage(dataUrl) {
   if (!dataUrl) return "";
   const match =
@@ -26,6 +53,9 @@ export async function saveProductImage(dataUrl) {
       400,
       `Product images must be smaller than ${Math.round((env.maxUploadBytes / 1_048_576) * 10) / 10} MB.`,
     );
+  }
+  if (!matchesImageSignature(buffer, match[1])) {
+    throw new HttpError(400, "The uploaded file does not match its image type.");
   }
   await mkdir(root, { recursive: true });
   const extension = allowed.get(match[1]) || extname("image.jpg");

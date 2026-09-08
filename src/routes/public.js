@@ -54,6 +54,11 @@ publicRouter.get(
       settings: {
         storeName: settings.storeName,
         phone: settings.phone,
+        whatsappUrl: settings.whatsappUrl,
+        instagramUrl: settings.instagramUrl,
+        instagramHandle: settings.instagramHandle,
+        tiktokUrl: settings.tiktokUrl,
+        tiktokHandle: settings.tiktokHandle,
         notificationEmail: req.admin ? settings.notificationEmail : "",
         orderAlerts: req.admin ? settings.orderAlerts : undefined,
         viewTracking: settings.viewTracking,
@@ -113,7 +118,7 @@ publicRouter.get(
 publicRouter.post(
   "/orders/quote",
   asyncHandler(async (req, res) => {
-    const quote = await quoteCart(req.body.items);
+    const quote = await quoteCart(req.body.items, req.body.promotionCode);
     res.json({
       items: quote.items.map((item) => ({
         productId: String(item.product),
@@ -125,9 +130,11 @@ publicRouter.post(
         lineDeliveryFee: item.lineDeliveryFee,
       })),
       subtotal: quote.subtotal,
+      discount: quote.discount,
       deliveryFee: quote.deliveryFee,
       total: quote.total,
       currency: quote.currency,
+      promotion: quote.promotion,
     });
   }),
 );
@@ -139,6 +146,7 @@ publicRouter.post(
       customer: req.body.customer,
       cartItems: req.body.items,
       paymentMethod: req.body.paymentMethod,
+      promotionCode: req.body.promotionCode,
     });
     const orderToken = createOrderAccessToken(order);
 
@@ -213,7 +221,8 @@ publicRouter.post(
 publicRouter.get(
   "/orders/:reference",
   asyncHandler(async (req, res) => {
-    if (!verifyOrderAccessToken(req.query.token, req.params.reference)) {
+    const orderToken = req.get("x-order-token") || req.query.token;
+    if (!verifyOrderAccessToken(orderToken, req.params.reference)) {
       throw new HttpError(403, "The order link is invalid or incomplete.");
     }
     const order = await Order.findOne({
@@ -246,16 +255,25 @@ publicRouter.post(
     } catch {}
     const day = new Date().toISOString().slice(0, 10);
     const visitorHash = sha256(`${visitorId}:${env.sessionSecret}`);
-    await VisitorDay.updateOne(
-      { day, visitorHash },
-      {
-        $inc: { pageViews: 1 },
-        $addToSet: { paths: path },
-        $set: { lastSeenAt: new Date() },
-        $setOnInsert: { firstSeenAt: new Date(), referrerHost },
-      },
-      { upsert: true },
-    );
+    const productIdentifier = path.match(/^\/product\/([^/?#]+)/)?.[1];
+    const productQuery = productIdentifier
+      ? mongoose.isValidObjectId(productIdentifier)
+        ? { _id: productIdentifier, active: true }
+        : { slug: productIdentifier, active: true }
+      : null;
+    await Promise.all([
+      VisitorDay.updateOne(
+        { day, visitorHash },
+        {
+          $inc: { pageViews: 1 },
+          $addToSet: { paths: path },
+          $set: { lastSeenAt: new Date() },
+          $setOnInsert: { firstSeenAt: new Date(), referrerHost },
+        },
+        { upsert: true },
+      ),
+      productQuery ? Product.updateOne(productQuery, { $inc: { views: 1 } }) : null,
+    ]);
     res.status(204).end();
   }),
 );

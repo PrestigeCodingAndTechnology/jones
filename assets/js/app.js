@@ -98,6 +98,11 @@
   const defaults = {
     storeName: "Jones Kicks",
     phone: "0905 857 9374",
+    whatsappUrl: "https://wa.me/message/6BIGK72XFX23L1",
+    instagramUrl: "https://www.instagram.com/teejonesonly",
+    instagramHandle: "@teejonesonly",
+    tiktokUrl: "https://www.tiktok.com/@tee_jones247",
+    tiktokHandle: "@tee_jones247",
     notificationEmail: "",
     viewTracking: true,
     orderAlerts: true,
@@ -121,6 +126,18 @@
     timer: null,
     dashboard: null,
     analytics: null,
+    quote: null,
+    promotions: [],
+    messages: [],
+    subscribers: [],
+    admin: null,
+    orderSearch: "",
+    orderStatus: "",
+    orderPage: 1,
+    orderPages: 1,
+    orderTotal: 0,
+    promoBusy: false,
+    checkoutBusy: false,
     adminLoading: false,
   };
   function read(key, f) {
@@ -166,6 +183,19 @@
       maximumFractionDigits: 0,
     }).format(Number(v || 0));
   }
+  function secureUrl(value, fallbackValue) {
+    try {
+      const parsed = new URL(String(value || ""));
+      return parsed.protocol === "https:" ? esc(parsed.href) : esc(fallbackValue);
+    } catch (_) {
+      return esc(fallbackValue);
+    }
+  }
+  function phoneHref(value) {
+    let digits = String(value || "").replace(/\D/g, "");
+    if (digits.startsWith("0")) digits = "234" + digits.slice(1);
+    return "+" + digits;
+  }
   function day(off) {
     const d = new Date();
     d.setDate(d.getDate() + (off || 0));
@@ -188,20 +218,52 @@
       return n + x.qty;
     }, 0);
   }
+  function cartProductQuantity(productId) {
+    return state.cart.reduce(function (total, item) {
+      return total + (item.productId === productId ? item.qty : 0);
+    }, 0);
+  }
+  function cartSignature() {
+    return state.cart
+      .map(function (item) {
+        return item.productId + ":" + item.size + ":" + item.qty;
+      })
+      .sort()
+      .join("|");
+  }
+  function currentQuote() {
+    return state.quote && state.quote.signature === cartSignature()
+      ? state.quote
+      : null;
+  }
+  function invalidateQuote() {
+    state.quote = null;
+  }
   function subtotal() {
+    const quote = currentQuote();
+    if (quote) return Number(quote.subtotal || 0);
     return state.cart.reduce(function (n, x) {
       const p = product(x.productId);
       return n + (p ? p.price * x.qty : 0);
     }, 0);
   }
   function delivery() {
+    const quote = currentQuote();
+    if (quote) return Number(quote.deliveryFee || 0);
     return state.cart.reduce(function (n, x) {
       const p = product(x.productId);
       return n + (p ? Number(p.deliveryFee || 0) * x.qty : 0);
     }, 0);
   }
+  function discount() {
+    const quote = currentQuote();
+    return quote ? Number(quote.discount || 0) : 0;
+  }
   function total() {
-    return subtotal() + delivery();
+    const quote = currentQuote();
+    return quote
+      ? Number(quote.total || 0)
+      : subtotal() + delivery() - discount();
   }
   async function api(path, options) {
     const config = Object.assign({ headers: {} }, options || {});
@@ -411,6 +473,13 @@
       '" data-route="/contact">Contact</a></nav><div class="header-actions"><button class="header-action" data-search-trigger aria-label="Search">' +
       icon("search") +
       '</button><a class="header-action" href="' +
+      href("/wishlist") +
+      '" data-route="/wishlist" aria-label="Saved sneakers">' +
+      icon("heart") +
+      (state.wish.length
+        ? '<span class="badge">' + state.wish.length + "</span>"
+        : "") +
+      '</a><a class="header-action" href="' +
       href("/admin") +
       '" data-route="/admin" aria-label="Admin">' +
       icon("user") +
@@ -426,10 +495,16 @@
       '" data-route="/about">Our story</a><a href="' +
       href("/contact") +
       '" data-route="/contact">Contact</a><a href="' +
+      href("/wishlist") +
+      '" data-route="/wishlist">Saved sneakers</a><a href="' +
       href("/admin") +
       '" data-route="/admin">Admin</a></nav>';
   }
   function footer() {
+    const phone = state.settings.phone || defaults.phone,
+      whatsapp = secureUrl(state.settings.whatsappUrl, defaults.whatsappUrl),
+      instagram = secureUrl(state.settings.instagramUrl, defaults.instagramUrl),
+      tiktok = secureUrl(state.settings.tiktokUrl, defaults.tiktokUrl);
     document.getElementById("site-footer").innerHTML =
       '<footer class="site-footer"><div class="container"><div class="footer-top"><div class="footer-brand"><a class="brand" href="' +
       href("/") +
@@ -443,13 +518,25 @@
       href("/shop?category=Jordan") +
       '" data-route="/shop?category=Jordan">Jordan</a><a href="' +
       href("/cart") +
-      '" data-route="/cart">Shopping bag</a></div></div><div><p class="footer-title">Company</p><div class="footer-links"><a href="' +
+      '" data-route="/cart">Shopping bag</a><a href="' +
+      href("/wishlist") +
+      '" data-route="/wishlist">Saved sneakers</a></div></div><div><p class="footer-title">Company</p><div class="footer-links"><a href="' +
       href("/about") +
       '" data-route="/about">Our story</a><a href="' +
       href("/contact") +
       '" data-route="/contact">Contact</a><a href="' +
       href("/admin") +
-      '" data-route="/admin">Admin access</a></div></div><div><p class="footer-title">Connect</p><div class="footer-links"><a href="https://wa.me/message/6BIGK72XFX23L1" target="_blank" rel="noopener">WhatsApp</a><a href="https://www.instagram.com/teejonesonly" target="_blank" rel="noopener">Instagram</a><a href="https://www.tiktok.com/@tee_jones247" target="_blank" rel="noopener">TikTok</a><a href="tel:+2349058579374">0905 857 9374</a></div></div></div><div class="footer-bottom"><span>© ' +
+      '" data-route="/admin">Admin access</a></div></div><div><p class="footer-title">Connect</p><div class="footer-links"><a href="' +
+      whatsapp +
+      '" target="_blank" rel="noopener">WhatsApp</a><a href="' +
+      instagram +
+      '" target="_blank" rel="noopener">Instagram</a><a href="' +
+      tiktok +
+      '" target="_blank" rel="noopener">TikTok</a><a href="tel:' +
+      esc(phoneHref(phone)) +
+      '">' +
+      esc(phone) +
+      '</a></div></div></div><div class="footer-bottom"><span>© ' +
       new Date().getFullYear() +
       " Jones Kicks. All rights reserved.</span><span>Premium sneakers • Sizes 40–45</span></div></div></footer>";
   }
@@ -572,7 +659,11 @@
       });
     if (state.sort === "new")
       list.sort(function (a, b) {
-        return b.createdAt - a.createdAt;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+    if (state.sort === "featured")
+      list.sort(function (a, b) {
+        return Number(Boolean(b.featured)) - Number(Boolean(a.featured));
       });
     const cats = ["All"].concat(
       Array.from(
@@ -652,7 +743,13 @@
       p.sizes
         .map(function (s) {
           return (
-            '<button class="size-btn" data-size="' + s + '">' + s + "</button>"
+            '<button class="size-btn" data-size="' +
+            s +
+            '" ' +
+            (p.stock < 1 ? "disabled" : "") +
+            ">" +
+            s +
+            "</button>"
           );
         })
         .join("") +
@@ -732,12 +829,28 @@
       .join("");
   }
   function summary(button) {
+    const quote = currentQuote(),
+      promotion = quote && quote.promotion;
     return (
       '<div class="panel summary"><h2>Order summary</h2><div class="summary-line"><span>Products</span><strong>' +
       money(subtotal()) +
       '</strong></div><div class="summary-line"><span>Product delivery fees</span><strong>' +
       money(delivery()) +
-      '</strong></div><p class="summary-help">Delivery is calculated from the fee set by the admin for each pair.</p><div class="promo"><input placeholder="Promo code"><button data-promo>Apply</button></div><div class="summary-line total"><span>Total</span><strong>' +
+      '</strong></div><p class="summary-help">Delivery is calculated from the fee set by the admin for each pair.</p><div class="promo"><input aria-label="Promo code" placeholder="Promo code" value="' +
+      esc(promotion ? promotion.code : "") +
+      '" ' +
+      (promotion ? "readonly" : "") +
+      '><button type="button" ' +
+      (promotion ? 'data-remove-promo>Remove' : 'data-promo>Apply') +
+      "</button></div>" +
+      (discount()
+        ? '<div class="summary-line discount"><span>Promo discount (' +
+          esc(promotion.code) +
+          ')</span><strong>−' +
+          money(discount()) +
+          "</strong></div>"
+        : "") +
+      '<div class="summary-line total"><span>Total</span><strong>' +
       money(total()) +
       "</strong></div>" +
       button +
@@ -769,8 +882,36 @@
       "</div></section>"
     );
   }
-  function checkout() {
+  function wishlist() {
+    const saved = state.products.filter(function (item) {
+      return state.wish.includes(item.id);
+    });
+    return (
+      '<section class="page-hero"><div class="container"><div class="breadcrumbs"><a href="' +
+      href("/") +
+      '" data-route="/">Home</a><span>/</span><span>Saved sneakers</span></div><p class="eyebrow">Your shortlist</p><h1 class="display page-title">Saved pairs.</h1></div></section><section class="section-sm"><div class="container"><div class="results-line"><span>' +
+      saved.length +
+      " saved sneaker" +
+      (saved.length === 1 ? "" : "s") +
+      '</span><a href="' +
+      href("/shop") +
+      '" data-route="/shop">Browse all sneakers</a></div><div class="product-grid">' +
+      (saved.length
+        ? saved.map(card).join("")
+        : '<div class="empty-state"><h2>No saved pairs yet</h2><p>Tap the heart on any sneaker to keep it here.</p><a class="btn btn-acid" href="' +
+          href("/shop") +
+          '" data-route="/shop">Explore sneakers</a></div>') +
+      "</div></div></section>"
+    );
+  }
+  function checkout(u) {
     if (!state.cart.length) return cart();
+    const paymentError = u && u.searchParams.get("payment"),
+      paymentMessages = {
+        "missing-reference": "The payment provider did not return an order reference. Please try again.",
+        "order-not-found": "We could not match that payment to an order. Please contact support before trying again.",
+        "verification-failed": "Payment could not be verified. If you were debited, contact support with your payment reference.",
+      };
     const paymentNote = runtime.api
       ? runtime.paymentMode === "paystack"
         ? "You will be redirected to Paystack to complete your payment securely."
@@ -781,8 +922,16 @@
       href("/cart") +
       '" data-route="/cart">Bag</a><span>/</span><span>Checkout</span></div><p class="eyebrow">One final step</p><h1 class="display page-title">Delivery & payment.</h1></div></section><section class="section-sm"><div class="container checkout-layout"><form class="panel checkout-form" id="checkout-form"><div class="form-section"><div class="form-section-head"><span class="step-no">01</span><h2>Contact information</h2></div><div class="field-grid"><div class="field"><label>Full name</label><input name="fullName" autocomplete="name" required placeholder="Your full name"></div><div class="field"><label>Email address</label><input name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div><div class="field full"><label>Phone number</label><input name="phone" autocomplete="tel" inputmode="tel" required placeholder="e.g. 0801 234 5678"></div></div></div><div class="form-section"><div class="form-section-head"><span class="step-no">02</span><h2>Delivery details</h2></div><div class="field-grid"><div class="field full"><label>Delivery address</label><input name="address" autocomplete="street-address" required placeholder="House number, street and area"></div><div class="field"><label>City / town</label><input name="city" required></div><div class="field"><label>State</label><input name="region" required></div><div class="field full"><label>Delivery note (optional)</label><textarea name="notes" placeholder="Landmark or helpful instruction"></textarea></div></div></div><div class="form-section"><div class="form-section-head"><span class="step-no">03</span><h2>Payment method</h2></div><label class="payment-option"><input type="radio" name="payment" value="online" checked><span><strong>Paystack secure payment</strong><span>Choose card, bank transfer, USSD or another available Paystack channel.</span></span></label><p class="prototype-note">' +
       esc(paymentNote) +
-      '</p></div><button class="btn btn-acid btn-block" type="submit">Pay securely • ' +
-      money(total()) +
+      '</p></div>' +
+      (paymentMessages[paymentError]
+        ? '<div class="form-alert" role="alert">' +
+          esc(paymentMessages[paymentError]) +
+          "</div>"
+        : "") +
+      '<button class="btn btn-acid btn-block" data-checkout-submit type="submit" ' +
+      (state.checkoutBusy ? "disabled" : "") +
+      ">" +
+      (state.checkoutBusy ? "Preparing secure payment…" : "Pay securely • " + money(total())) +
       '</button></form><aside class="panel checkout-summary"><div class="admin-card-head"><h3>Your order</h3><a href="' +
       href("/cart") +
       '" data-route="/cart">Edit bag</a></div><div class="mini-items">' +
@@ -791,7 +940,13 @@
       money(subtotal()) +
       '</strong></div><div class="summary-line"><span>Product delivery fees</span><strong>' +
       money(delivery()) +
-      '</strong></div><div class="summary-line total"><span>Total</span><strong>' +
+      "</strong></div>" +
+      (discount()
+        ? '<div class="summary-line discount"><span>Promo discount</span><strong>−' +
+          money(discount()) +
+          "</strong></div>"
+        : "") +
+      '<div class="summary-line total"><span>Total</span><strong>' +
       money(total()) +
       "</strong></div></aside></div></section>"
     );
@@ -804,11 +959,18 @@
       o = state.orders.find(function (x) {
         return x.id === ref;
       }),
+      needsReview = o && o.status === "Needs review",
       note = runtime.api
-        ? "Your payment and order are recorded securely. A confirmation email will be sent when SMTP delivery is configured."
+        ? "Your payment and order are recorded securely. Your receipt is sent automatically when email delivery is configured."
         : "This order belongs to the static interface preview.";
     return (
-      '<section class="success-wrap"><div class="success-card animate__animated animate__fadeInUp"><span class="success-icon">✓</span><p class="eyebrow">Payment confirmed</p><h1 class="display">Your pair is reserved.</h1><p class="muted">Thanks for shopping Jones Kicks. The order is now in the admin order centre and the team will confirm the delivery step.</p><span class="order-ref">Order ' +
+      '<section class="success-wrap"><div class="success-card animate__animated animate__fadeInUp"><span class="success-icon">✓</span><p class="eyebrow">Payment confirmed</p><h1 class="display">' +
+      (needsReview ? "Your order is being reviewed." : "Your pair is reserved.") +
+      '</h1><p class="muted">' +
+      (needsReview
+        ? "Payment is confirmed, but one item needs a stock check. The Jones Kicks team will contact you shortly."
+        : "Thanks for shopping Jones Kicks. The order is now in the admin order centre and the team will confirm the delivery step.") +
+      '</p><span class="order-ref">Order ' +
       esc(ref) +
       "</span>" +
       (o
@@ -820,7 +982,9 @@
         : "") +
       '<div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:22px"><a class="btn btn-acid" href="' +
       href("/shop") +
-      '" data-route="/shop">Continue shopping</a><a class="btn btn-outline" href="https://wa.me/message/6BIGK72XFX23L1" target="_blank">Chat on WhatsApp</a></div><p class="prototype-note" style="text-align:left">' +
+      '" data-route="/shop">Continue shopping</a><a class="btn btn-outline" href="' +
+      secureUrl(state.settings.whatsappUrl, defaults.whatsappUrl) +
+      '" target="_blank" rel="noopener">Chat on WhatsApp</a></div><p class="prototype-note" style="text-align:left">' +
       esc(note) +
       "</p></div></section>"
     );
@@ -837,7 +1001,8 @@
     );
   }
   function contact() {
-    return `<section class="page-hero"><div class="container"><div class="breadcrumbs"><a href="${href("/")}" data-route="/">Home</a><span>/</span><span>Contact</span></div><p class="eyebrow">Talk to us</p><h1 class="display page-title">We are one message away.</h1></div></section><section class="section-sm"><div class="container contact-layout"><div class="contact-card"><p class="eyebrow">Jones Kicks support</p><h2 class="display">Let us help you find the pair.</h2><div class="contact-links"><a class="contact-link" href="tel:+2349058579374"><div><strong>Call us</strong><span>0905 857 9374</span></div><b>↗</b></a><a class="contact-link" href="https://wa.me/message/6BIGK72XFX23L1" target="_blank"><div><strong>WhatsApp</strong><span>Fast order and sizing support</span></div><b>↗</b></a><a class="contact-link" href="https://www.instagram.com/teejonesonly" target="_blank"><div><strong>Instagram</strong><span>@teejonesonly</span></div><b>↗</b></a><a class="contact-link" href="https://www.tiktok.com/@tee_jones247" target="_blank"><div><strong>TikTok</strong><span>@tee_jones247</span></div><b>↗</b></a></div></div><form class="contact-form-card" id="contact-form"><p class="eyebrow">Send an enquiry</p><h2 style="margin:0 0 26px;font-size:27px">How can we help?</h2><div class="field-grid"><div class="field"><label>Your name</label><input name="name" required></div><div class="field"><label>Phone number</label><input name="phone" required></div><div class="field full"><label>Message</label><textarea name="message" required placeholder="Tell us the sneaker or size you need"></textarea></div></div><button class="btn btn-acid" style="margin-top:20px">Send enquiry</button><p class="prototype-note">Your enquiry is saved securely for Jones Kicks support.</p></form></div></section>`;
+    const phone = state.settings.phone || defaults.phone;
+    return `<section class="page-hero"><div class="container"><div class="breadcrumbs"><a href="${href("/")}" data-route="/">Home</a><span>/</span><span>Contact</span></div><p class="eyebrow">Talk to us</p><h1 class="display page-title">We are one message away.</h1></div></section><section class="section-sm"><div class="container contact-layout"><div class="contact-card"><p class="eyebrow">Jones Kicks support</p><h2 class="display">Let us help you find the pair.</h2><div class="contact-links"><a class="contact-link" href="tel:${esc(phoneHref(phone))}"><div><strong>Call us</strong><span>${esc(phone)}</span></div><b>↗</b></a><a class="contact-link" href="${secureUrl(state.settings.whatsappUrl, defaults.whatsappUrl)}" target="_blank" rel="noopener"><div><strong>WhatsApp</strong><span>Fast order and sizing support</span></div><b>↗</b></a><a class="contact-link" href="${secureUrl(state.settings.instagramUrl, defaults.instagramUrl)}" target="_blank" rel="noopener"><div><strong>Instagram</strong><span>${esc(state.settings.instagramHandle || defaults.instagramHandle)}</span></div><b>↗</b></a><a class="contact-link" href="${secureUrl(state.settings.tiktokUrl, defaults.tiktokUrl)}" target="_blank" rel="noopener"><div><strong>TikTok</strong><span>${esc(state.settings.tiktokHandle || defaults.tiktokHandle)}</span></div><b>↗</b></a></div></div><form class="contact-form-card" id="contact-form"><p class="eyebrow">Send an enquiry</p><h2 style="margin:0 0 26px;font-size:27px">How can we help?</h2><div class="field-grid"><div class="field"><label>Your name</label><input name="name" autocomplete="name" required></div><div class="field"><label>Phone number</label><input name="phone" autocomplete="tel" inputmode="tel" required></div><div class="field full"><label>Message</label><textarea name="message" required placeholder="Tell us the sneaker or size you need"></textarea></div></div><button class="btn btn-acid" style="margin-top:20px">Send enquiry</button><p class="prototype-note">Your enquiry is saved securely for Jones Kicks support.</p></form></div></section>`;
   }
   function notFound() {
     return (
@@ -869,6 +1034,9 @@
       ["dashboard", "⌂", "Overview"],
       ["catalogue", "◇", "Catalogue"],
       ["orders", "▤", "Orders"],
+      ["promotions", "%", "Promotions"],
+      ["messages", "✉", "Inbox"],
+      ["subscribers", "+", "Subscribers"],
       ["analytics", "↗", "Analytics"],
       ["settings", "⚙", "Settings"],
     ];
@@ -955,13 +1123,23 @@
             return n + Number(o.total || 0);
           }, 0),
       orderCount = metrics ? metrics.orders : state.orders.length,
+      newOrderCount = metrics
+        ? metrics.newOrders
+        : state.orders.filter(function (o) {
+            return o.status === "New";
+          }).length,
       visitorCount = metrics
         ? metrics.totalVisitors
         : Number(state.views.total || 0),
       catalogueCount = metrics ? metrics.products : state.products.length,
-      fresh = state.orders.filter(function (o) {
-        return o.status === "New";
-      }).length,
+      lowStock = metrics
+        ? metrics.lowStock
+        : state.products.filter(function (item) {
+            return item.stock <= 4;
+          }).length,
+      unreadMessages = metrics ? metrics.unreadMessages : 0,
+      activeSubscribers = metrics ? metrics.activeSubscribers : 0,
+      activePromotions = metrics ? metrics.activePromotions : 0,
       days = viewDays(),
       max = Math.max.apply(
         null,
@@ -971,19 +1149,32 @@
           })
           .concat([1]),
       ),
-      top = state.products.slice(0, 5);
+      top =
+        state.dashboard && state.dashboard.topProducts?.length
+          ? state.dashboard.topProducts.map(function (item) {
+              return Object.assign({ fallback: fallback[0] }, item);
+            })
+          : state.products.slice(0, 5);
     return (
       '<div class="admin-heading"><div><h2>Store overview</h2><p>Live catalogue, payment, order and visitor activity.</p></div><button class="btn btn-acid" data-new-product>Add sneaker</button></div><div class="kpi-grid"><div class="kpi"><div class="kpi-top"><span>Unique visitors</span><span class="kpi-icon">↗</span></div><strong>' +
       Number(visitorCount).toLocaleString() +
       '</strong><small>Tracked across the website</small></div><div class="kpi"><div class="kpi-top"><span>Total orders</span><span class="kpi-icon">▤</span></div><strong>' +
       orderCount +
       "</strong><small>" +
-      fresh +
+      newOrderCount +
       ' new paid orders</small></div><div class="kpi"><div class="kpi-top"><span>Paid revenue</span><span class="kpi-icon">₦</span></div><strong>' +
       money(rev) +
       '</strong><small>Verified payment value</small></div><div class="kpi"><div class="kpi-top"><span>Catalogue</span><span class="kpi-icon">◇</span></div><strong>' +
       catalogueCount +
-      '</strong><small>Active sneaker styles</small></div></div><div class="admin-grid"><div class="admin-card"><div class="admin-card-head"><h3>Unique visitors • Last 7 days</h3><button data-admin-tab="analytics">View report</button></div><div class="chart">' +
+      '</strong><small>Active sneaker styles</small></div></div><div class="ops-grid"><button data-admin-tab="catalogue"><span>Low stock</span><strong>' +
+      lowStock +
+      '</strong></button><button data-admin-tab="messages"><span>Unread enquiries</span><strong>' +
+      unreadMessages +
+      '</strong></button><button data-admin-tab="subscribers"><span>Drop-list subscribers</span><strong>' +
+      activeSubscribers +
+      '</strong></button><button data-admin-tab="promotions"><span>Active promotions</span><strong>' +
+      activePromotions +
+      '</strong></button></div><div class="admin-grid"><div class="admin-card"><div class="admin-card-head"><h3>Unique visitors • Last 7 days</h3><button data-admin-tab="analytics">View report</button></div><div class="chart">' +
       days
         .map(function (x) {
           return (
@@ -995,7 +1186,7 @@
           );
         })
         .join("") +
-      '</div></div><div class="admin-card"><div class="admin-card-head"><h3>Catalogue snapshot</h3><button data-admin-tab="catalogue">Manage</button></div><div class="top-products">' +
+      '</div></div><div class="admin-card"><div class="admin-card-head"><h3>Top-selling sneakers</h3><button data-admin-tab="catalogue">Manage</button></div><div class="top-products">' +
       top
         .map(function (p) {
           return (
@@ -1004,9 +1195,9 @@
             "<div><h4>" +
             esc(p.name) +
             "</h4><p>" +
-            p.stock +
-            " pairs in stock</p></div><strong>" +
-            money(p.price) +
+            (p.sales != null ? p.sales + " pairs sold" : p.stock + " pairs in stock") +
+            "</p></div><strong>" +
+            (p.revenue != null ? money(p.revenue) : money(p.price)) +
             "</strong></div>"
           );
         })
@@ -1064,18 +1255,221 @@
     );
   }
   function orders() {
+    const q = state.orderSearch.toLowerCase(),
+      list = runtime.api
+        ? state.orders
+        : state.orders.filter(function (order) {
+            const matchesText = (
+              order.id +
+              " " +
+              order.customer.fullName +
+              " " +
+              order.customer.phone +
+              " " +
+              (order.customer.email || "")
+            )
+              .toLowerCase()
+              .includes(q);
+            return (
+              matchesText &&
+              (!state.orderStatus || order.status === state.orderStatus)
+            );
+          }),
+      pagination =
+        runtime.api && state.orderPages > 1
+          ? '<div class="table-pagination"><button class="icon-btn" data-order-page="' +
+            (state.orderPage - 1) +
+            '" ' +
+            (state.orderPage <= 1 ? "disabled" : "") +
+            '>Previous</button><span>Page ' +
+            state.orderPage +
+            " of " +
+            state.orderPages +
+            " • " +
+            state.orderTotal +
+            ' orders</span><button class="icon-btn" data-order-page="' +
+            (state.orderPage + 1) +
+            '" ' +
+            (state.orderPage >= state.orderPages ? "disabled" : "") +
+            ">Next</button></div>"
+          : "";
+    const newOrders =
+      state.dashboard?.metrics?.newOrders ??
+      state.orders.filter(function (order) {
+        return order.status === "New";
+      }).length;
     return (
       '<div class="admin-heading"><div><h2>Orders</h2><p>Review customer delivery details and update fulfilment.</p></div><span class="status pending">' +
-      state.orders.filter(function (o) {
-        return o.status === "New";
+      newOrders +
+      ' new</span></div><div class="table-card"><div class="table-tools"><form class="search-box" id="admin-order-search"><input name="query" value="' +
+      esc(state.orderSearch) +
+      '" placeholder="Search order or customer"><button>' +
+      icon("search") +
+      '</button></form><select class="select-control" id="admin-order-status"><option value="">All statuses</option>' +
+      [
+        "Awaiting payment",
+        "New",
+        "Confirmed",
+        "Processing",
+        "Dispatched",
+        "Completed",
+        "Cancelled",
+        "Needs review",
+      ]
+        .map(function (status) {
+          return (
+            '<option value="' +
+            esc(status) +
+            '" ' +
+            (state.orderStatus === status ? "selected" : "") +
+            ">" +
+            esc(status) +
+            "</option>"
+          );
+        })
+        .join("") +
+      '</select></div>' +
+      ordersTable(list) +
+      pagination +
+      "</div>"
+    );
+  }
+  function promotionState(p) {
+    const now = Date.now();
+    if (!p.active) return "Inactive";
+    if (p.startsAt && new Date(p.startsAt).getTime() > now) return "Scheduled";
+    if (p.endsAt && new Date(p.endsAt).getTime() < now) return "Expired";
+    if (p.usageLimit && p.usedCount >= p.usageLimit) return "Used up";
+    return "Active";
+  }
+  function promotions() {
+    return (
+      '<div class="admin-heading"><div><h2>Promotions</h2><p>Create working discount codes for the shopping bag and checkout.</p></div><button class="btn btn-acid" data-new-promotion>Create promo code</button></div><div class="table-card">' +
+      (state.promotions.length
+        ? '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Code</th><th>Offer</th><th>Minimum</th><th>Usage</th><th>Validity</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
+          state.promotions
+            .map(function (p) {
+              const status = promotionState(p),
+                offer =
+                  p.type === "percentage"
+                    ? p.value + "% off"
+                    : money(p.value) + " off";
+              return (
+                '<tr><td><strong class="promo-code">' +
+                esc(p.code) +
+                "</strong></td><td>" +
+                esc(offer) +
+                (p.maximumDiscount
+                  ? '<br><span class="muted">Maximum ' +
+                    money(p.maximumDiscount) +
+                    "</span>"
+                  : "") +
+                "</td><td>" +
+                money(p.minimumSubtotal) +
+                "</td><td>" +
+                p.usedCount +
+                " / " +
+                (p.usageLimit || "Unlimited") +
+                "</td><td>" +
+                (p.endsAt ? date(p.endsAt) : "No expiry") +
+                '</td><td><span class="status ' +
+                (status === "Active" ? "" : "pending") +
+                '">' +
+                esc(status) +
+                '</span></td><td><div class="actions"><button class="icon-btn" data-edit-promotion="' +
+                esc(p.id) +
+                '">Edit</button>' +
+                (p.active
+                  ? '<button class="icon-btn" data-delete-promotion="' +
+                    esc(p.id) +
+                    '">Deactivate</button>'
+                  : "") +
+                "</div></td></tr>"
+              );
+            })
+            .join("") +
+          "</tbody></table></div>"
+        : '<div class="empty-state" style="padding:45px 20px"><h2>No promo codes yet</h2><p>Create a code customers can apply to eligible orders.</p><button class="btn btn-acid" data-new-promotion>Create promo code</button></div>') +
+      "</div>"
+    );
+  }
+  function messages() {
+    return (
+      '<div class="admin-heading"><div><h2>Customer inbox</h2><p>Read and manage enquiries submitted from the contact page.</p></div><span class="status pending">' +
+      state.messages.filter(function (item) {
+        return item.status === "New";
       }).length +
       ' new</span></div><div class="table-card">' +
-      ordersTable(state.orders) +
+      (state.messages.length
+        ? '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Customer</th><th>Message</th><th>Status</th><th>Received</th><th>Action</th></tr></thead><tbody>' +
+          state.messages
+            .map(function (item) {
+              return (
+                '<tr><td><strong>' +
+                esc(item.name) +
+                '</strong><br><a href="tel:' +
+                esc(phoneHref(item.phone)) +
+                '">' +
+                esc(item.phone) +
+                '</a></td><td><span class="message-preview">' +
+                esc(item.message) +
+                '</span></td><td><span class="status ' +
+                (item.status === "New" ? "pending" : "") +
+                '">' +
+                esc(item.status) +
+                "</span></td><td>" +
+                date(item.createdAt) +
+                '</td><td><button class="icon-btn" data-message-view="' +
+                esc(item._id || item.id) +
+                '">Open</button></td></tr>'
+              );
+            })
+            .join("") +
+          "</tbody></table></div>"
+        : '<div class="empty-state" style="padding:45px 20px"><h2>No enquiries yet</h2><p>Messages from the contact page will appear here.</p></div>') +
+      "</div>"
+    );
+  }
+  function subscribers() {
+    return (
+      '<div class="admin-heading"><div><h2>WhatsApp subscribers</h2><p>Manage customers who joined the new-drop list.</p></div><span class="status">' +
+      state.subscribers.filter(function (item) {
+        return item.active;
+      }).length +
+      ' active</span></div><div class="table-card">' +
+      (state.subscribers.length
+        ? '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>WhatsApp number</th><th>Source</th><th>Joined</th><th>Status</th><th>Action</th></tr></thead><tbody>' +
+          state.subscribers
+            .map(function (item) {
+              return (
+                '<tr><td><strong>' +
+                esc(item.phone) +
+                "</strong></td><td>" +
+                esc(item.source || "storefront") +
+                "</td><td>" +
+                date(item.createdAt) +
+                '</td><td><span class="status ' +
+                (item.active ? "" : "pending") +
+                '">' +
+                (item.active ? "Active" : "Inactive") +
+                '</span></td><td><button class="icon-btn" data-subscriber-toggle="' +
+                esc(item._id || item.id) +
+                '" data-active="' +
+                String(Boolean(item.active)) +
+                '">' +
+                (item.active ? "Deactivate" : "Reactivate") +
+                "</button></td></tr>"
+              );
+            })
+            .join("") +
+          "</tbody></table></div>"
+        : '<div class="empty-state" style="padding:45px 20px"><h2>No subscribers yet</h2><p>New-drop sign-ups will appear here.</p></div>') +
       "</div>"
     );
   }
   function analytics() {
     const days = viewDays(),
+      details = state.analytics || {},
       max = Math.max.apply(
         null,
         days
@@ -1095,9 +1489,9 @@
       Number(state.views.total || 0).toLocaleString() +
       '</strong><small>Selected reporting period</small></div><div class="kpi"><div class="kpi-top"><span>Today</span><span class="kpi-icon">•</span></div><strong>' +
       (state.views.days[day()] || 0) +
-      '</strong><small>Unique visitors today</small></div><div class="kpi"><div class="kpi-top"><span>Products</span><span class="kpi-icon">◇</span></div><strong>' +
-      state.products.length +
-      '</strong><small>Current catalogue</small></div><div class="kpi"><div class="kpi-top"><span>Order rate</span><span class="kpi-icon">%</span></div><strong>' +
+      '</strong><small>Unique visitors today</small></div><div class="kpi"><div class="kpi-top"><span>Page views</span><span class="kpi-icon">◇</span></div><strong>' +
+      Number(details.totalPageViews || 0).toLocaleString() +
+      '</strong><small>Selected reporting period</small></div><div class="kpi"><div class="kpi-top"><span>Order rate</span><span class="kpi-icon">%</span></div><strong>' +
       (state.views.total
         ? Math.round((orderCount / state.views.total) * 100)
         : 0) +
@@ -1115,23 +1509,53 @@
           );
         })
         .join("") +
-      '</div><p class="prototype-note">Visitor identities are stored as privacy-preserving hashes; raw identifiers and IP addresses are not retained.</p></div>'
+      '</div><p class="prototype-note">Visitor identities are stored as privacy-preserving hashes; raw identifiers and IP addresses are not retained.</p></div><div class="analytics-detail-grid"><section class="admin-card"><div class="admin-card-head"><h3>Most visited pages</h3><span class="muted">Visitors</span></div><div class="rank-list">' +
+      ((details.topPaths || []).length
+        ? details.topPaths
+            .map(function (item) {
+              return (
+                '<div><span>' +
+                esc(item._id || "/") +
+                "</span><strong>" +
+                Number(item.visitors || 0).toLocaleString() +
+                "</strong></div>"
+              );
+            })
+            .join("")
+        : '<p class="muted">No page data yet.</p>') +
+      '</div></section><section class="admin-card"><div class="admin-card-head"><h3>Top referrers</h3><span class="muted">Visitors</span></div><div class="rank-list">' +
+      ((details.referrers || []).length
+        ? details.referrers
+            .map(function (item) {
+              return (
+                '<div><span>' +
+                esc(item._id || "Direct") +
+                "</span><strong>" +
+                Number(item.visitors || 0).toLocaleString() +
+                "</strong></div>"
+              );
+            })
+            .join("")
+        : '<p class="muted">No external referrers yet.</p>') +
+      '</div></section><section class="admin-card"><div class="admin-card-head"><h3>Most viewed products</h3><span class="muted">Views</span></div><div class="rank-list">' +
+      ((details.topViewedProducts || []).length
+        ? details.topViewedProducts
+            .map(function (item) {
+              return (
+                '<div><span>' +
+                esc(item.name) +
+                "</span><strong>" +
+                Number(item.views || 0).toLocaleString() +
+                "</strong></div>"
+              );
+            })
+            .join("")
+        : '<p class="muted">No product views yet.</p>') +
+      "</div></section></div>"
     );
   }
   function settings() {
-    return (
-      '<div class="admin-heading"><div><h2>Store settings</h2><p>Manage customer contact and order-notification preferences.</p></div></div><form id="settings-form"><div class="settings-grid"><section class="settings-card"><h3>Store profile</h3><p>Basic customer-facing details.</p><div class="field"><label>Store name</label><input name="storeName" value="' +
-      esc(state.settings.storeName) +
-      '"></div><div class="field"><label>Customer phone</label><input name="phone" value="' +
-      esc(state.settings.phone) +
-      '"></div></section><section class="settings-card"><h3>Order email notifications</h3><p>Set the inbox that receives paid-order alerts.</p><div class="field"><label>Notification email</label><input name="notificationEmail" type="email" value="' +
-      esc(state.settings.notificationEmail) +
-      '" placeholder="orders@yourdomain.com"><small>SMTP credentials must also be configured on the server.</small></div><div class="toggle-row"><div><strong>New-order alerts</strong><span>Email the owner after confirmed payment</span></div><button type="button" class="toggle ' +
-      (state.settings.orderAlerts ? "on" : "") +
-      '" data-toggle-setting="orderAlerts"></button></div><div class="toggle-row"><div><strong>Website view tracking</strong><span>Measure unique visitors and page views</span></div><button type="button" class="toggle ' +
-      (state.settings.viewTracking ? "on" : "") +
-      '" data-toggle-setting="viewTracking"></button></div></section></div><button class="btn btn-acid" style="margin-top:18px">Save settings</button></form>'
-    );
+    return `<div class="admin-heading"><div><h2>Store settings</h2><p>Manage customer contact, social links, notifications and account security.</p></div></div><form id="settings-form"><div class="settings-grid"><section class="settings-card"><h3>Store profile</h3><p>Customer-facing store details.</p><div class="field"><label>Store name</label><input name="storeName" required value="${esc(state.settings.storeName)}"></div><div class="field"><label>Customer phone</label><input name="phone" required value="${esc(state.settings.phone)}"></div><div class="field"><label>WhatsApp URL</label><input name="whatsappUrl" type="url" required value="${esc(state.settings.whatsappUrl || defaults.whatsappUrl)}"></div></section><section class="settings-card"><h3>Social channels</h3><p>Links shown on the contact page and footer.</p><div class="field"><label>Instagram URL</label><input name="instagramUrl" type="url" required value="${esc(state.settings.instagramUrl || defaults.instagramUrl)}"></div><div class="field"><label>Instagram handle</label><input name="instagramHandle" required value="${esc(state.settings.instagramHandle || defaults.instagramHandle)}"></div><div class="field"><label>TikTok URL</label><input name="tiktokUrl" type="url" required value="${esc(state.settings.tiktokUrl || defaults.tiktokUrl)}"></div><div class="field"><label>TikTok handle</label><input name="tiktokHandle" required value="${esc(state.settings.tiktokHandle || defaults.tiktokHandle)}"></div></section><section class="settings-card"><h3>Order email notifications</h3><p>Set the inbox that receives verified paid-order alerts.</p><div class="field"><label>Notification email</label><input name="notificationEmail" type="email" value="${esc(state.settings.notificationEmail)}" placeholder="orders@yourdomain.com"><small>SMTP credentials must also be configured on the server.</small></div><div class="toggle-row"><div><strong>New-order alerts</strong><span>Email the owner after confirmed payment</span></div><button type="button" aria-label="Toggle new-order alerts" class="toggle ${state.settings.orderAlerts ? "on" : ""}" data-toggle-setting="orderAlerts"></button></div><div class="toggle-row"><div><strong>Website view tracking</strong><span>Measure unique visitors and page views</span></div><button type="button" aria-label="Toggle website analytics" class="toggle ${state.settings.viewTracking ? "on" : ""}" data-toggle-setting="viewTracking"></button></div></section></div><button class="btn btn-acid" style="margin-top:18px">Save store settings</button></form><form class="settings-card account-security" id="password-form"><h3>Administrator password</h3><p>Use at least 12 characters. Updating it signs out every other admin session.</p><div class="field-grid"><div class="field"><label>Current password</label><input name="currentPassword" type="password" autocomplete="current-password" required minlength="8"></div><div class="field"><label>New password</label><input name="newPassword" type="password" autocomplete="new-password" required minlength="12"></div></div><button class="btn btn-outline" style="margin-top:18px">Update password</button></form>`;
   }
   function admin() {
     const authenticated = runtime.api
@@ -1142,6 +1566,9 @@
         dashboard: "Overview",
         catalogue: "Catalogue",
         orders: "Orders",
+        promotions: "Promotions",
+        messages: "Customer inbox",
+        subscribers: "Subscribers",
         analytics: "Analytics",
         settings: "Settings",
       },
@@ -1151,6 +1578,12 @@
           ? catalogue()
           : state.adminTab === "orders"
             ? orders()
+            : state.adminTab === "promotions"
+              ? promotions()
+              : state.adminTab === "messages"
+                ? messages()
+                : state.adminTab === "subscribers"
+                  ? subscribers()
             : state.adminTab === "analytics"
               ? analytics()
               : state.adminTab === "settings"
@@ -1161,7 +1594,11 @@
       sidebar() +
       '<div class="admin-main"><header class="admin-topbar"><h1>' +
       title[state.adminTab] +
-      '</h1><div class="admin-user"><span class="avatar">JK</span><div><strong>Store Admin</strong><span>Jones Kicks</span></div></div></header><main class="admin-content">' +
+      '</h1><div class="admin-user"><span class="avatar">JK</span><div><strong>' +
+      esc(state.admin?.name || "Store Admin") +
+      '</strong><span>' +
+      esc(state.admin?.email || "Jones Kicks") +
+      "</span></div></div></header><main class=\"admin-content\">" +
       content +
       "</main></div></div>"
     );
@@ -1211,8 +1648,11 @@
     } else if (path === "/cart") {
       app.innerHTML = cart();
       document.title = "Shopping Bag • Jones Kicks";
+    } else if (path === "/wishlist") {
+      app.innerHTML = wishlist();
+      document.title = "Saved Sneakers • Jones Kicks";
     } else if (path === "/checkout") {
-      app.innerHTML = checkout();
+      app.innerHTML = checkout(u);
       document.title = "Checkout • Jones Kicks";
     } else if (path === "/order-success") {
       const paidReference = u.searchParams.get("order");
@@ -1342,7 +1782,9 @@
             return (
               '<button class="size-btn" data-size="' +
               s +
-              '">' +
+              '" ' +
+              (p.stock < 1 ? "disabled" : "") +
+              ">" +
               s +
               "</button>"
             );
@@ -1361,11 +1803,19 @@
     const p = product(id);
     if (!p || !state.size)
       return toast("Choose your preferred size first.", "!");
+    if (p.stock < 1) return toast("This sneaker is currently sold out.", "!");
     const x = state.cart.find(function (i) {
       return i.productId === id && i.size === state.size;
     });
+    if (x && x.qty >= 10) {
+      return toast("A maximum of 10 pairs is allowed per size.", "!");
+    }
+    if (cartProductQuantity(id) >= p.stock) {
+      return toast(`Only ${p.stock} pair(s) are currently available.`, "!");
+    }
     if (x) x.qty++;
     else state.cart.push({ productId: id, size: state.size, qty: 1 });
+    invalidateQuote();
     save(K.cart, state.cart);
     close();
     header(url().pathname);
@@ -1378,11 +1828,25 @@
         return i.productId === x[0] && i.size === Number(x[1]);
       });
     if (!item) return;
+    const p = product(item.productId);
+    if (dir === "up" && item.qty >= 10) {
+      toast("A maximum of 10 pairs is allowed per size.", "!");
+      return;
+    }
+    if (
+      dir === "up" &&
+      p &&
+      cartProductQuantity(item.productId) >= Number(p.stock || 0)
+    ) {
+      toast(`Only ${p.stock} pair(s) are currently available.`, "!");
+      return;
+    }
     item.qty += dir === "up" ? 1 : -1;
     if (item.qty <= 0)
       state.cart = state.cart.filter(function (i) {
         return i !== item;
       });
+    invalidateQuote();
     save(K.cart, state.cart);
     if (document.getElementById("cart-drawer").classList.contains("open")) {
       drawer();
@@ -1394,6 +1858,7 @@
     state.cart = state.cart.filter(function (i) {
       return !(i.productId === x[0] && i.size === Number(x[1]));
     });
+    invalidateQuote();
     save(K.cart, state.cart);
     toast("Item removed from your bag.", "✓");
     if (document.getElementById("cart-drawer").classList.contains("open")) {
@@ -1416,7 +1881,56 @@
       "♥",
     );
   }
+  async function applyPromotion(button) {
+    if (state.promoBusy) return;
+    const input = button.closest(".promo")?.querySelector("input"),
+      code = String(input?.value || "")
+        .trim()
+        .toUpperCase();
+    if (!code) return toast("Enter a promo code first.", "!");
+    if (!runtime.api) {
+      return toast("Promo codes are available on the live store.", "i");
+    }
+    state.promoBusy = true;
+    button.disabled = true;
+    button.textContent = "Checking…";
+    try {
+      const quote = await api("/api/orders/quote", {
+        method: "POST",
+        body: { items: state.cart, promotionCode: code },
+      });
+      state.quote = Object.assign({}, quote, { signature: cartSignature() });
+      render();
+      toast(`${quote.promotion.code} applied successfully.`, "✓");
+    } catch (error) {
+      invalidateQuote();
+      button.disabled = false;
+      button.textContent = "Apply";
+      toast(error.message, "!");
+    } finally {
+      state.promoBusy = false;
+    }
+  }
+  function removePromotion() {
+    invalidateQuote();
+    render();
+    toast("Promo code removed.", "✓");
+  }
   async function payment(customer) {
+    if (state.checkoutBusy) return;
+    state.checkoutBusy = true;
+    const displayedQuote = {
+        subtotal: subtotal(),
+        discount: discount(),
+        deliveryFee: delivery(),
+        total: total(),
+      },
+      appliedCode = currentQuote()?.promotion?.code || "";
+    const submit = document.querySelector("[data-checkout-submit]");
+    if (submit) {
+      submit.disabled = true;
+      submit.textContent = "Preparing secure payment…";
+    }
     state.pending = {
       customer: customer,
       total: total(),
@@ -1431,6 +1945,7 @@
           '</strong></div><p>No live charge occurs in the static preview.</p><button class="btn btn-acid btn-block" data-payment-success>Simulate successful payment</button><button class="btn btn-outline btn-block" data-layer-close style="margin-top:8px">Return to checkout</button></div>',
         "payment-modal",
       );
+      state.checkoutBusy = false;
       return;
     }
     modal(
@@ -1442,12 +1957,30 @@
       "payment-modal",
     );
     try {
+      const freshQuote = await api("/api/orders/quote", {
+        method: "POST",
+        body: { items: state.cart, promotionCode: appliedCode },
+      });
+      state.quote = Object.assign({}, freshQuote, { signature: cartSignature() });
+      if (
+        ["subtotal", "discount", "deliveryFee", "total"].some(function (key) {
+          return Number(freshQuote[key] || 0) !== Number(displayedQuote[key] || 0);
+        })
+      ) {
+        state.pending = null;
+        state.checkoutBusy = false;
+        close();
+        render();
+        toast("Your order total changed. Review the updated amount before paying.", "!");
+        return;
+      }
       const payload = await api("/api/orders", {
         method: "POST",
         body: {
           customer: customer,
           items: state.cart,
           paymentMethod: customer.payment,
+          promotionCode: freshQuote.promotion ? freshQuote.promotion.code : "",
         },
       });
       sessionStorage.setItem("jk_last_order", payload.order.reference);
@@ -1461,6 +1994,7 @@
         demoToken: payload.payment.demoToken,
         orderToken: payload.orderToken,
       };
+      state.checkoutBusy = false;
       modal(
         '<div class="payment-modal"><div class="payment-brand"><a class="brand">' +
           brand() +
@@ -1470,6 +2004,7 @@
         "payment-modal",
       );
     } catch (error) {
+      state.checkoutBusy = false;
       close();
       toast(error.message, "!");
     }
@@ -1486,6 +2021,7 @@
         );
         state.orders.unshift(payload.order);
         state.cart = [];
+        invalidateQuote();
         save(K.cart, state.cart);
         sessionStorage.setItem("jk_last_order", payload.order.reference);
         sessionStorage.setItem(K.orderToken, payload.orderToken);
@@ -1515,6 +2051,7 @@
     };
     state.orders.unshift(o);
     state.cart = [];
+    invalidateQuote();
     save(K.orders, state.orders);
     save(K.cart, state.cart);
     sessionStorage.setItem("jk_last_order", o.id);
@@ -1543,7 +2080,9 @@
         esc(p ? p.deliveryFee : 0) +
         '"><small>This exact fee follows the product into cart, checkout and the order.</small></div><div class="field"><label>Stock quantity</label><input name="stock" type="number" min="0" required value="' +
         esc(p ? p.stock : 1) +
-        '"></div><div class="field full"><label>Image URL</label><input name="image" value="' +
+        '"></div><div class="field full"><label class="check-row"><input name="featured" type="checkbox" ' +
+        (!p || p.featured ? "checked" : "") +
+        '><span><strong>Feature this sneaker</strong><small>Show it in the homepage collection.</small></span></label></div><div class="field full"><label>Image URL</label><input name="image" value="' +
         esc(p ? p.image : "") +
         '"></div><div class="field full"><label>Or upload product image</label><input id="product-image-upload" type="file" accept="image/png,image/jpeg,image/webp"><small>JPG, PNG or WebP; maximum 1.5 MB.</small></div><div class="field full"><label>Description</label><textarea name="description" required>' +
         esc(p ? p.description : "") +
@@ -1565,6 +2104,7 @@
         image: String(d.get("image") || (old && old.image) || fallback[0]),
         imageData: state.upload,
         description: String(d.get("description")).trim(),
+        featured: d.get("featured") === "on",
       };
     if (runtime.api) {
       try {
@@ -1634,11 +2174,15 @@
     state.products = state.products.filter(function (p) {
       return p.id !== id;
     });
+    state.wish = state.wish.filter(function (productId) {
+      return productId !== id;
+    });
     state.cart = state.cart.filter(function (x) {
       return x.productId !== id;
     });
     save(K.products, state.products);
     save(K.cart, state.cart);
+    save(K.wish, state.wish);
     close();
     renderAdmin();
     toast("Sneaker removed.", "✓");
@@ -1648,26 +2192,90 @@
       return x.id === id;
     });
     if (!o) return;
+    const paid = o.paymentStatus === "paid",
+      locked = o.status === "Cancelled",
+      canSendStatus =
+        paid &&
+        [
+          "Confirmed",
+          "Processing",
+          "Dispatched",
+          "Completed",
+          "Cancelled",
+          "Needs review",
+        ].includes(o.status),
+      statuses = paid
+        ? o.status === "Needs review"
+          ? ["Needs review", "Confirmed", "Cancelled"]
+          : [
+              "New",
+              "Confirmed",
+              "Processing",
+              "Dispatched",
+              "Completed",
+              "Cancelled",
+              "Needs review",
+            ]
+        : ["Awaiting payment", "Cancelled", "Needs review"],
+      statusOptions = statuses
+        .map(function (status) {
+          return (
+            '<option value="' +
+            esc(status) +
+            '" ' +
+            (o.status === status ? "selected" : "") +
+            ">" +
+            esc(status) +
+            "</option>"
+          );
+        })
+        .join(""),
+      history = (o.statusHistory || [])
+        .slice()
+        .reverse()
+        .map(function (entry) {
+          return (
+            '<div><span>' +
+            esc(entry.status) +
+            "</span><small>" +
+            date(entry.changedAt) +
+            "</small></div>"
+          );
+        })
+        .join("");
     modal(
       '<div class="admin-modal"><h2>Order ' +
         esc(o.id) +
         '</h2><div class="field-grid"><div><p class="muted">Customer</p><strong>' +
         esc(o.customer.fullName) +
-        "</strong><br>" +
+        '</strong><br><a href="mailto:' +
         esc(o.customer.email || "") +
-        "<br>" +
+        '">' +
+        esc(o.customer.email || "") +
+        '</a><br><a href="tel:' +
+        esc(phoneHref(o.customer.phone)) +
+        '">' +
         esc(o.customer.phone) +
+        "</a>" +
         '</div><div><p class="muted">Order total</p><strong>' +
         money(o.total) +
         "</strong><br>" +
         esc(o.paymentStatus) +
+        (o.discount
+          ? "<br>Discount: −" + money(o.discount) +
+            (o.promotionCode ? " (" + esc(o.promotionCode) + ")" : "")
+          : "") +
         '</div><div class="field full"><p class="muted">Delivery address</p><strong>' +
         esc(o.customer.address) +
         ", " +
         esc(o.customer.city) +
         ", " +
         esc(o.customer.region) +
-        '</strong></div></div><div class="mini-items" style="margin-top:24px">' +
+        "</strong>" +
+        (o.customer.notes
+          ? '<p class="muted">Note: ' + esc(o.customer.notes) + "</p>"
+          : "") +
+        '</div></div><div class="mini-items" style="margin-top:24px">' +
         o.items
           .map(function (x) {
             const p = product(x.productId) || {
@@ -1698,23 +2306,53 @@
             );
           })
           .join("") +
-        '</div><div class="field"><label>Order status</label><select id="order-status"><option ' +
-        (o.status === "New" ? "selected" : "") +
-        ">New</option><option " +
-        (o.status === "Confirmed" ? "selected" : "") +
-        ">Confirmed</option><option " +
-        (o.status === "Processing" ? "selected" : "") +
-        ">Processing</option><option " +
-        (o.status === "Dispatched" ? "selected" : "") +
-        ">Dispatched</option><option " +
-        (o.status === "Completed" ? "selected" : "") +
-        ">Completed</option><option " +
-        (o.status === "Cancelled" ? "selected" : "") +
-        ">Cancelled</option><option " +
-        (o.status === "Needs review" ? "selected" : "") +
-        '>Needs review</option></select></div><div class="modal-actions"><button class="btn btn-outline" data-layer-close>Close</button><button class="btn btn-acid" data-save-order="' +
+        '</div><div class="order-admin-grid"><div class="field"><label>Order status</label><select id="order-status" ' +
+        (locked ? "disabled" : "") +
+        ">" +
+        statusOptions +
+        '</select><small>Paid-order cancellation returns committed stock. Process any customer refund separately in Paystack.</small></div><div><p class="muted">Receipt email</p><strong>' +
+        (o.notification?.sentAt ? "Sent " + date(o.notification.sentAt) : "Not sent") +
+        "</strong>" +
+        (o.notification?.lastError
+          ? '<p class="form-alert compact">' +
+            esc(o.notification.lastError) +
+            "</p>"
+          : "") +
+        '</div><div><p class="muted">Latest status email</p><strong>' +
+        (o.notification?.statusSentAt
+          ? "Sent " + date(o.notification.statusSentAt)
+          : canSendStatus
+            ? "Not sent"
+            : "Available after a status update") +
+        "</strong>" +
+        (o.notification?.statusLastError
+          ? '<p class="form-alert compact">' +
+            esc(o.notification.statusLastError) +
+            "</p>"
+          : "") +
+        "</div></div>" +
+        (history
+          ? '<div class="status-history"><p class="muted">Status history</p>' +
+            history +
+            "</div>"
+          : "") +
+        '<div class="modal-actions"><button class="btn btn-outline" data-layer-close>Close</button>' +
+        (paid
+          ? '<button class="btn btn-outline" data-resend-order="' +
+            esc(o.id) +
+            '">Resend receipt</button>'
+          : "") +
+        (canSendStatus
+          ? '<button class="btn btn-outline" data-resend-status="' +
+            esc(o.id) +
+            '">Resend status email</button>'
+          : "") +
+        (!locked
+          ? '<button class="btn btn-acid" data-save-order="' +
         esc(o.id) +
-        '">Save status</button></div></div>',
+            '">Save status</button>'
+          : "") +
+        "</div></div>",
       "admin-modal",
     );
   }
@@ -1730,6 +2368,10 @@
           { method: "PATCH", body: { status: status } },
         );
         state.orders[state.orders.indexOf(o)] = result.order;
+        close();
+        await loadAdminTab("orders", state.orderPage);
+        toast("Order status updated.", "✓");
+        return;
       } catch (error) {
         toast(error.message, "!");
         return;
@@ -1742,8 +2384,244 @@
     renderAdmin();
     toast("Order status updated.", "✓");
   }
-  async function loadAdminTab(tab) {
+  async function resendOrderEmail(id) {
+    if (!runtime.api) return toast("Email retry requires the live backend.", "i");
+    try {
+      const result = await api(
+        "/api/admin/orders/" + encodeURIComponent(id) + "/resend-notification",
+        { method: "POST" },
+      );
+      const existing = state.orders.find(function (item) {
+        return item.id === id;
+      });
+      if (existing) state.orders[state.orders.indexOf(existing)] = result.order;
+      close();
+      toast(result.message, "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  async function resendOrderStatusEmail(id) {
+    if (!runtime.api) return toast("Email retry requires the live backend.", "i");
+    try {
+      const result = await api(
+        "/api/admin/orders/" +
+          encodeURIComponent(id) +
+          "/resend-status-notification",
+        { method: "POST" },
+      );
+      const existing = state.orders.find(function (item) {
+        return item.id === id;
+      });
+      if (existing) state.orders[state.orders.indexOf(existing)] = result.order;
+      close();
+      toast(result.message, "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  function dateTimeInput(value) {
+    if (!value) return "";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "";
+    const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  }
+  function editPromotion(id) {
+    const p = id
+      ? state.promotions.find(function (item) {
+          return item.id === id;
+        })
+      : null;
+    modal(
+      '<form class="admin-modal" id="promotion-form"><h2>' +
+        (p ? "Edit promo code" : "Create promo code") +
+        '</h2><input type="hidden" name="id" value="' +
+        esc(p ? p.id : "") +
+        '"><div class="field-grid"><div class="field"><label>Promo code</label><input name="code" required minlength="3" maxlength="30" value="' +
+        esc(p ? p.code : "") +
+        '" placeholder="WELCOME10"></div><div class="field"><label>Discount type</label><select name="type"><option value="percentage" ' +
+        (!p || p.type === "percentage" ? "selected" : "") +
+        '>Percentage</option><option value="fixed" ' +
+        (p?.type === "fixed" ? "selected" : "") +
+        '>Fixed amount</option></select></div><div class="field"><label>Discount value</label><input name="value" type="number" min="1" step="1" required value="' +
+        esc(p ? p.value : 10) +
+        '"></div><div class="field"><label>Minimum product subtotal (₦)</label><input name="minimumSubtotal" type="number" min="0" step="1" value="' +
+        esc(p ? p.minimumSubtotal : 0) +
+        '"></div><div class="field"><label>Maximum discount (₦)</label><input name="maximumDiscount" type="number" min="0" step="1" value="' +
+        esc(p ? p.maximumDiscount : 0) +
+        '"><small>Use 0 for no maximum.</small></div><div class="field"><label>Usage limit</label><input name="usageLimit" type="number" min="0" step="1" value="' +
+        esc(p ? p.usageLimit : 0) +
+        '"><small>Use 0 for unlimited.</small></div><div class="field"><label>Starts</label><input name="startsAt" type="datetime-local" value="' +
+        esc(p ? dateTimeInput(p.startsAt) : "") +
+        '"></div><div class="field"><label>Ends</label><input name="endsAt" type="datetime-local" value="' +
+        esc(p ? dateTimeInput(p.endsAt) : "") +
+        '"></div><div class="field full"><label class="check-row"><input name="active" type="checkbox" ' +
+        (!p || p.active ? "checked" : "") +
+        '><span><strong>Active promo code</strong><small>Customers can apply it while its dates and limits are valid.</small></span></label></div></div><div class="modal-actions"><button type="button" class="btn btn-outline" data-layer-close>Cancel</button><button class="btn btn-acid">Save promo code</button></div></form>',
+      "admin-modal",
+    );
+  }
+  async function savePromotion(form) {
+    const data = new FormData(form),
+      id = String(data.get("id") || ""),
+      existing = state.promotions.find(function (item) {
+        return item.id === id;
+      }),
+      payload = {
+        code: String(data.get("code") || "").toUpperCase(),
+        type: data.get("type"),
+        value: Number(data.get("value")),
+        minimumSubtotal: Number(data.get("minimumSubtotal") || 0),
+        maximumDiscount: Number(data.get("maximumDiscount") || 0),
+        usageLimit: Number(data.get("usageLimit") || 0),
+        startsAt: data.get("startsAt") || "",
+        endsAt: data.get("endsAt") || "",
+        active: data.get("active") === "on",
+      };
+    try {
+      const result = runtime.api
+        ? await api(
+            existing
+              ? "/api/admin/promotions/" + encodeURIComponent(existing.id)
+              : "/api/admin/promotions",
+            { method: existing ? "PATCH" : "POST", body: payload },
+          )
+        : {
+            promotion: Object.assign(
+              {
+                id: existing?.id || "promo-" + Date.now(),
+                usedCount: existing?.usedCount || 0,
+                createdAt: existing?.createdAt || new Date().toISOString(),
+              },
+              payload,
+            ),
+          };
+      if (existing) state.promotions[state.promotions.indexOf(existing)] = result.promotion;
+      else state.promotions.unshift(result.promotion);
+      close();
+      renderAdmin();
+      toast(existing ? "Promo code updated." : "Promo code created.", "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  function askDeletePromotion(id) {
+    const p = state.promotions.find(function (item) {
+      return item.id === id;
+    });
+    if (!p) return;
+    modal(
+      '<div class="admin-modal"><h2>Deactivate promo code?</h2><p class="muted">Customers will no longer be able to apply <strong>' +
+        esc(p.code) +
+        '</strong>.</p><div class="modal-actions"><button class="btn btn-outline" data-layer-close>Cancel</button><button class="btn btn-danger" data-confirm-promotion-delete="' +
+        esc(id) +
+        '">Deactivate</button></div></div>',
+      "admin-modal",
+    );
+  }
+  async function deletePromotion(id) {
+    try {
+      if (runtime.api) {
+        await api("/api/admin/promotions/" + encodeURIComponent(id), {
+          method: "DELETE",
+        });
+      }
+      const p = state.promotions.find(function (item) {
+        return item.id === id;
+      });
+      if (p) p.active = false;
+      close();
+      renderAdmin();
+      toast("Promo code deactivated.", "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  function openMessage(id) {
+    const item = state.messages.find(function (message) {
+      return String(message._id || message.id) === id;
+    });
+    if (!item) return;
+    modal(
+      '<div class="admin-modal"><p class="eyebrow">Customer enquiry</p><h2>' +
+        esc(item.name) +
+        '</h2><p><a href="tel:' +
+        esc(phoneHref(item.phone)) +
+        '">' +
+        esc(item.phone) +
+        '</a> • ' +
+        date(item.createdAt) +
+        '</p><div class="message-full">' +
+        esc(item.message) +
+        '</div><div class="field"><label>Message status</label><select id="message-status"><option ' +
+        (item.status === "New" ? "selected" : "") +
+        '>New</option><option ' +
+        (item.status === "Read" ? "selected" : "") +
+        '>Read</option><option ' +
+        (item.status === "Closed" ? "selected" : "") +
+        '>Closed</option></select></div><div class="modal-actions"><button class="btn btn-outline" data-layer-close>Close</button><button class="btn btn-acid" data-save-message="' +
+        esc(id) +
+        '">Save status</button></div></div>',
+      "admin-modal",
+    );
+  }
+  async function saveMessageStatus(id, status) {
+    const item = state.messages.find(function (message) {
+      return String(message._id || message.id) === id;
+    });
+    if (!item) return;
+    try {
+      if (runtime.api) {
+        const result = await api(
+          "/api/admin/messages/" + encodeURIComponent(id) + "/status",
+          { method: "PATCH", body: { status: status } },
+        );
+        state.messages[state.messages.indexOf(item)] = result.message;
+      } else item.status = status;
+      close();
+      renderAdmin();
+      toast("Message status updated.", "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  async function toggleSubscriber(id, active) {
+    const item = state.subscribers.find(function (subscriber) {
+      return String(subscriber._id || subscriber.id) === id;
+    });
+    if (!item) return;
+    try {
+      if (runtime.api) {
+        const result = await api(
+          "/api/admin/subscribers/" + encodeURIComponent(id),
+          { method: "PATCH", body: { active: active } },
+        );
+        state.subscribers[state.subscribers.indexOf(item)] = result.subscriber;
+      } else item.active = active;
+      renderAdmin();
+      toast(active ? "Subscriber reactivated." : "Subscriber deactivated.", "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  async function changePassword(form) {
+    if (!runtime.api) return toast("Password changes require the live backend.", "i");
+    const data = Object.fromEntries(new FormData(form).entries());
+    try {
+      const result = await api("/api/admin/account/password", {
+        method: "POST",
+        body: data,
+      });
+      form.reset();
+      toast(result.message, "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  async function loadAdminTab(tab, requestedPage) {
     state.adminTab = tab;
+    if (tab === "orders" && requestedPage) state.orderPage = requestedPage;
     if (!runtime.api) {
       renderAdmin();
       return;
@@ -1763,8 +2641,23 @@
         const data = await api("/api/admin/products");
         state.products = data.products;
       } else if (tab === "orders") {
-        const data = await api("/api/admin/orders");
+        const params = new URLSearchParams({ page: String(state.orderPage) });
+        if (state.orderSearch) params.set("search", state.orderSearch);
+        if (state.orderStatus) params.set("status", state.orderStatus);
+        const data = await api("/api/admin/orders?" + params.toString());
         state.orders = data.orders;
+        state.orderPage = data.page;
+        state.orderPages = Math.max(1, data.pages || 1);
+        state.orderTotal = data.total;
+      } else if (tab === "promotions") {
+        const data = await api("/api/admin/promotions");
+        state.promotions = data.promotions;
+      } else if (tab === "messages") {
+        const data = await api("/api/admin/messages");
+        state.messages = data.messages;
+      } else if (tab === "subscribers") {
+        const data = await api("/api/admin/subscribers");
+        state.subscribers = data.subscribers;
       } else if (tab === "analytics") {
         const data = await api("/api/admin/analytics?days=30");
         state.analytics = data;
@@ -1821,6 +2714,7 @@
         return;
       }
       runtime.adminAuthenticated = false;
+      state.admin = null;
       state.dashboard = null;
       state.orders = [];
     } else sessionStorage.removeItem("jk_admin_auth");
@@ -1832,6 +2726,13 @@
       payload = {
         storeName: String(d.get("storeName") || "Jones Kicks"),
         phone: String(d.get("phone") || ""),
+        whatsappUrl: String(d.get("whatsappUrl") || defaults.whatsappUrl),
+        instagramUrl: String(d.get("instagramUrl") || defaults.instagramUrl),
+        instagramHandle: String(
+          d.get("instagramHandle") || defaults.instagramHandle,
+        ),
+        tiktokUrl: String(d.get("tiktokUrl") || defaults.tiktokUrl),
+        tiktokHandle: String(d.get("tiktokHandle") || defaults.tiktokHandle),
         notificationEmail: String(d.get("notificationEmail") || ""),
         orderAlerts: Boolean(state.settings.orderAlerts),
         viewTracking: Boolean(state.settings.viewTracking),
@@ -1896,12 +2797,9 @@
     if (!token) return;
     loadingOrders.add(reference);
     try {
-      const result = await api(
-        "/api/orders/" +
-          encodeURIComponent(reference) +
-          "?token=" +
-          encodeURIComponent(token),
-      );
+      const result = await api("/api/orders/" + encodeURIComponent(reference), {
+        headers: { "x-order-token": token },
+      });
       state.orders = state.orders.filter(function (order) {
         return order.id !== reference;
       });
@@ -1922,6 +2820,7 @@
       const session = await api("/api/session");
       runtime.csrfToken = session.csrfToken;
       runtime.adminAuthenticated = session.adminAuthenticated;
+      state.admin = session.admin;
       runtime.paymentMode = session.paymentMode;
       state.settings = Object.assign(
         {},
@@ -2010,8 +2909,8 @@
       render();
     } else if (t.matches("[data-qty]")) qty(t.dataset.line, t.dataset.qty);
     else if (t.matches("[data-remove]")) remove(t.dataset.remove);
-    else if (t.matches("[data-promo]"))
-      toast("Promo codes will be available when configured.", "i");
+    else if (t.matches("[data-promo]")) void applyPromotion(t);
+    else if (t.matches("[data-remove-promo]")) removePromotion();
     else if (t.matches("[data-payment-success]")) void complete();
     else if (t.matches("[data-admin-tab]"))
       void loadAdminTab(t.dataset.adminTab);
@@ -2024,9 +2923,32 @@
     else if (t.matches("[data-confirm-delete]"))
       void del(t.dataset.confirmDelete);
     else if (t.matches("[data-order-view]")) openOrder(t.dataset.orderView);
+    else if (t.matches("[data-order-page]"))
+      void loadAdminTab("orders", Number(t.dataset.orderPage));
+    else if (t.matches("[data-resend-order]"))
+      void resendOrderEmail(t.dataset.resendOrder);
+    else if (t.matches("[data-resend-status]"))
+      void resendOrderStatusEmail(t.dataset.resendStatus);
     else if (t.matches("[data-save-order]")) {
       const s = document.getElementById("order-status");
       if (s) void saveOrderStatus(t.dataset.saveOrder, s.value);
+    } else if (t.matches("[data-new-promotion]")) editPromotion();
+    else if (t.matches("[data-edit-promotion]"))
+      editPromotion(t.dataset.editPromotion);
+    else if (t.matches("[data-delete-promotion]"))
+      askDeletePromotion(t.dataset.deletePromotion);
+    else if (t.matches("[data-confirm-promotion-delete]"))
+      void deletePromotion(t.dataset.confirmPromotionDelete);
+    else if (t.matches("[data-message-view]"))
+      openMessage(t.dataset.messageView);
+    else if (t.matches("[data-save-message]")) {
+      const status = document.getElementById("message-status");
+      if (status) void saveMessageStatus(t.dataset.saveMessage, status.value);
+    } else if (t.matches("[data-subscriber-toggle]")) {
+      void toggleSubscriber(
+        t.dataset.subscriberToggle,
+        t.dataset.active !== "true",
+      );
     } else if (t.matches("[data-toggle-setting]")) {
       const k = t.dataset.toggleSetting;
       state.settings[k] = !state.settings[k];
@@ -2043,13 +2965,20 @@
     } else if (f.id === "admin-product-search") {
       state.adminSearch = String(new FormData(f).get("query")).trim();
       renderAdmin();
+    } else if (f.id === "admin-order-search") {
+      state.orderSearch = String(new FormData(f).get("query")).trim();
+      state.orderPage = 1;
+      if (runtime.api) void loadAdminTab("orders", 1);
+      else renderAdmin();
     } else if (f.id === "newsletter-form") void subscribe(f);
     else if (f.id === "contact-form") void sendContact(f);
     else if (f.id === "checkout-form")
       void payment(Object.fromEntries(new FormData(f).entries()));
     else if (f.id === "admin-login") void login(f);
     else if (f.id === "product-form") void saveProduct(f);
+    else if (f.id === "promotion-form") void savePromotion(f);
     else if (f.id === "settings-form") void saveSettings(f);
+    else if (f.id === "password-form") void changePassword(f);
   });
   document.addEventListener("change", function (e) {
     if (e.target.id === "sort-select") {
@@ -2070,6 +2999,12 @@
         toast("Image ready to save.", "✓");
       };
       r.readAsDataURL(f);
+    }
+    if (e.target.id === "admin-order-status") {
+      state.orderStatus = e.target.value;
+      state.orderPage = 1;
+      if (runtime.api) void loadAdminTab("orders", 1);
+      else renderAdmin();
     }
   });
   document.getElementById("drawer-backdrop").addEventListener("click", close);

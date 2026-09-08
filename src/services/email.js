@@ -63,6 +63,7 @@ export async function sendOrderNotifications(order) {
       <p>Payment has been confirmed and the order is ready for fulfilment.</p>
       <table style="width:100%;border-collapse:collapse">${orderTable(order)}</table>
       <p><strong>Products:</strong> ${money(order.subtotal)}<br>
+      ${order.discount ? `<strong>Discount${order.promotion?.code ? ` (${escapeHtml(order.promotion.code)})` : ""}:</strong> -${money(order.discount)}<br>` : ""}
       <strong>Delivery:</strong> ${money(order.deliveryFee)}<br>
       <strong>Total:</strong> ${money(order.total)}</p>
       <p><strong>Customer:</strong> ${escapeHtml(order.customer.fullName)}<br>
@@ -102,6 +103,49 @@ export async function recordNotificationResult(order, task) {
     order.notification.lastError = "";
   } catch (error) {
     order.notification.lastError = String(error.message || error).slice(0, 500);
+  }
+  await order.save();
+}
+
+export async function sendOrderStatusNotification(order) {
+  const mailer = getTransporter();
+  if (!mailer) throw new Error("SMTP is not configured.");
+  const statusCopy = {
+    Confirmed: "Your order has been confirmed and is being prepared.",
+    Processing: "Your order is currently being prepared.",
+    Dispatched: "Your order has been dispatched. The Jones Kicks team will contact you with delivery details.",
+    Completed: "Your order has been completed. Thank you for shopping with Jones Kicks.",
+    Cancelled: "Your order has been cancelled. Please contact Jones Kicks if you need assistance.",
+    "Needs review": "Your order needs a quick review. The Jones Kicks team will contact you shortly.",
+  };
+  const message = statusCopy[order.status];
+  if (!message) return;
+  await mailer.sendMail({
+    from: env.smtp.from,
+    to: order.customer.email,
+    subject: `Order ${order.reference}: ${order.status}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#151515">
+        <h1>Order update</h1>
+        <p>Hi ${escapeHtml(order.customer.fullName)},</p>
+        <p>${escapeHtml(message)}</p>
+        <p><strong>Order:</strong> ${escapeHtml(order.reference)}<br>
+        <strong>Status:</strong> ${escapeHtml(order.status)}<br>
+        <strong>Total:</strong> ${money(order.total)}</p>
+      </div>`,
+  });
+}
+
+export async function recordStatusNotificationResult(order, task) {
+  try {
+    await task;
+    order.notification.statusSentAt = new Date();
+    order.notification.statusLastError = "";
+  } catch (error) {
+    order.notification.statusLastError = String(error.message || error).slice(
+      0,
+      500,
+    );
   }
   await order.save();
 }

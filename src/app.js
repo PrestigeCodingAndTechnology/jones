@@ -1,4 +1,5 @@
 import express from "express";
+import mongoose from "mongoose";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "./config/env.js";
@@ -58,10 +59,19 @@ export function createApp() {
     });
   });
 
+  app.get("/ready", (_req, res) => {
+    const ready = mongoose.connection.readyState === 1;
+    res.status(ready ? 200 : 503).json({
+      status: ready ? "ready" : "not-ready",
+      database: ready ? "connected" : "disconnected",
+    });
+  });
+
   app.get("/payment/callback", paymentCallback);
 
   const apiLimiter = rateLimit({ windowMs: 15 * 60_000, max: 250, key: "api" });
   app.use("/api", apiLimiter, (req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
     if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
     return verifyCsrf(req, res, next);
   });

@@ -14,10 +14,12 @@ A complete Jones Kicks ecommerce application built with Node.js, Express, EJS, M
 - Wishlist and persistent shopping bag
 - Contact, delivery-address and delivery-note collection
 - Per-product delivery fees shown in the product, bag and checkout
+- Working promotion codes with minimum spend, scheduling and usage limits
 - Server-authoritative product, delivery and total calculations
 - Paystack checkout initialization, callback verification and signed webhook handling
 - Order confirmation and customer email support
 - Working contact-enquiry submission
+- Private post-payment order lookup without exposing customer details publicly
 
 ### Secure administrator backend
 
@@ -29,11 +31,14 @@ A complete Jones Kicks ecommerce application built with Node.js, Express, EJS, M
 - Product image URL or validated JPG/PNG/WebP upload
 - A customizable delivery fee for every product
 - Real order centre with customer and delivery details
-- Fulfilment status updates and status history
+- Fulfilment status updates, customer status emails and status history
+- Automatic stock reservation, rollback and paid-order cancellation restocking
 - Paid-order revenue dashboard
-- Privacy-preserving unique-visitor and page-view analytics
-- Store details and order-notification settings
-- SMTP owner/customer notifications
+- Privacy-preserving visitor, page, referrer and product-view analytics
+- Promotion, customer-inbox and WhatsApp-subscriber management
+- Store contact/social settings and administrator password changes
+- SMTP owner/customer notifications with visible delivery status and retry
+- Readiness/liveness probes, Docker image and one-command local stack
 
 ## Requirements
 
@@ -58,19 +63,29 @@ Edit `.env`, especially:
 - `PAYMENT_MODE` and `PAYSTACK_SECRET_KEY`
 - SMTP settings and `ORDER_NOTIFICATION_EMAIL`
 
-Create the initial catalogue, settings and administrator:
+Create the initial catalogue and administrator, then start the server, with one command:
 
 ```bash
-npm run seed
+npm run start:seeded
 ```
 
-Start the application:
-
-```bash
-npm start
-```
+The seed is idempotent: running it again adds missing starter records without overwriting catalogue changes made in the admin dashboard. After initial setup, `npm start` starts only the server.
 
 Open `http://localhost:5000` and use `#/admin` for the administration area.
+
+### Start everything with Docker
+
+Docker Compose starts MongoDB, creates the initial catalogue and administrator, and starts the web application:
+
+```bash
+docker compose up --build
+```
+
+Then open `http://localhost:5000`. To choose a different local administrator password:
+
+```bash
+ADMIN_PASSWORD='your-password' docker compose up --build
+```
 
 ## Payments
 
@@ -87,6 +102,8 @@ For real payments:
 
 The server initializes transactions privately, verifies the status and amount before marking an order paid, and validates the webhook's HMAC-SHA512 signature.
 
+Paid-order confirmation also commits inventory atomically per product. If stock changed between checkout and payment, the order is marked **Needs review** instead of overselling. An administrator can restock and confirm it, or cancel it. Cancelling a committed paid order returns its stock; any monetary refund is processed separately in Paystack.
+
 ## Product delivery fees
 
 Every product has its own `deliveryFee`. The administrator enters or changes it in the add/edit sneaker form. The customer UI shows the fee per pair, and both the browser and server calculate:
@@ -102,10 +119,11 @@ Uploaded images are validated and saved under `public/uploads`. This is suitable
 ## Verification
 
 ```bash
-npm test
-npm run check
+npm run verify
 ```
 
-## Deployment note
+## Deployment
 
 GitHub Pages can display only the static preview in `index.html`; it cannot run Node.js or MongoDB. Deploy the complete application to a Node-capable service or VPS, configure MongoDB and environment variables, then point the production domain to that server.
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the production environment, Docker command, persistent-upload requirement, Paystack webhook and release checklist.

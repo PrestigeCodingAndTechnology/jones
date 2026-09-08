@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculateQuote } from "../src/services/orderService.js";
+import {
+  calculateQuote,
+  inventoryRequirements,
+} from "../src/services/orderService.js";
 
 const products = [
   {
@@ -63,5 +66,33 @@ test("rejects a cart quantity that exceeds real inventory", () => {
         products,
       ),
     /Only 3 Second Pair pair\(s\) remain/,
+  );
+});
+
+test("checks shared product stock across different selected sizes", () => {
+  assert.throws(
+    () =>
+      calculateQuote(
+        [
+          { productId: String(products[1]._id), size: 42, qty: 2 },
+          { productId: String(products[1]._id), size: 44, qty: 2 },
+        ],
+        products,
+      ),
+    /across your selected sizes/,
+  );
+});
+
+test("groups inventory changes by product before stock is committed", () => {
+  assert.deepEqual(
+    inventoryRequirements([
+      { product: products[0]._id, quantity: 2 },
+      { product: products[0]._id, quantity: 1 },
+      { product: products[1]._id, quantity: 2 },
+    ]),
+    [
+      { product: String(products[0]._id), quantity: 3 },
+      { product: String(products[1]._id), quantity: 2 },
+    ],
   );
 });
