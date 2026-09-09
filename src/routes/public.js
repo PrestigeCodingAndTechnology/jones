@@ -37,7 +37,7 @@ publicRouter.get(
     const settings = await StoreSettings.findOneAndUpdate(
       { key: "primary" },
       { $setOnInsert: { key: "primary" } },
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: "after" },
     ).lean();
     res.json({
       csrfToken: req.csrfToken,
@@ -105,7 +105,7 @@ publicRouter.get(
     const product = await Product.findOneAndUpdate(
       { ...query, active: true },
       { $inc: { views: 1 } },
-      { new: true },
+      { returnDocument: "after" },
     ).lean();
     if (!product) throw new HttpError(404, "Sneaker not found.");
     res.json({ product: publicProduct(product) });
@@ -293,7 +293,7 @@ publicRouter.post(
     await Subscriber.findOneAndUpdate(
       { phone },
       { $set: { active: true, source: "storefront" }, $setOnInsert: { phone } },
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: "after" },
     );
     res.status(201).json({ message: "You are on the Jones Kicks drop list." });
   }),

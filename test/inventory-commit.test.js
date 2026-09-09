@@ -9,7 +9,7 @@ import {
 const orderItem = {
   product: "507f1f77bcf86cd799439011",
   name: "Atomic Runner",
-  size: 43,
+  size: 46.5,
   quantity: 2,
 };
 
@@ -30,7 +30,7 @@ test("inventory commits atomically against the ordered size", async (context) =>
   assert.ok(order.inventoryCommittedAt instanceof Date);
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0][0].sizeInventory, {
-    $elemMatch: { size: 43, stock: { $gte: 2 } },
+    $elemMatch: { size: 46.5, stock: { $gte: 2 } },
   });
   assert.deepEqual(calls[0][1].$inc, {
     "sizeInventory.$[selectedSize].stock": -2,
@@ -38,7 +38,7 @@ test("inventory commits atomically against the ordered size", async (context) =>
     __v: 1,
   });
   assert.deepEqual(calls[0][2].arrayFilters, [
-    { "selectedSize.size": 43 },
+    { "selectedSize.size": 46.5 },
   ]);
 });
 
@@ -87,7 +87,7 @@ test("restock safely reintroduces a size removed after an order", async (context
   assert.equal(await restockOrderInventory(order), true);
   assert.equal(calls.length, 3);
   assert.deepEqual(calls[1][1].$push.sizeInventory.$each, [
-    { size: 43, stock: 2 },
+    { size: 46.5, stock: 2 },
   ]);
-  assert.deepEqual(calls[2][1].$addToSet, { sizes: 43 });
+  assert.deepEqual(calls[2][1].$addToSet, { sizes: 46.5 });
 });

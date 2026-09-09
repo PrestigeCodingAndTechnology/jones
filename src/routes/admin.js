@@ -269,10 +269,14 @@ adminRouter.patch(
     if (!mongoose.isValidObjectId(req.params.id)) {
       throw new HttpError(400, "Invalid product.");
     }
-    const product = await Product.findById(req.params.id);
+    const existing = await Product.findById(req.params.id);
+    if (!existing) throw new HttpError(404, "Product not found.");
+    const product = await Product.findByIdAndUpdate(
+      req.params.id,
+      { $set: await productPayload(req.body, existing) },
+      { returnDocument: "after", runValidators: true },
+    );
     if (!product) throw new HttpError(404, "Product not found.");
-    Object.assign(product, await productPayload(req.body, product));
-    await product.save();
     res.json({ product: publicProduct(product) });
   }),
 );
@@ -286,7 +290,7 @@ adminRouter.delete(
     const product = await Product.findByIdAndUpdate(
       req.params.id,
       { active: false },
-      { new: true },
+      { returnDocument: "after" },
     );
     if (!product) throw new HttpError(404, "Product not found.");
     res.status(204).end();
@@ -553,7 +557,7 @@ adminRouter.get(
     const settings = await StoreSettings.findOneAndUpdate(
       { key: "primary" },
       { $setOnInsert: { key: "primary" } },
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: "after" },
     ).lean();
     res.json({ settings });
   }),
@@ -578,7 +582,7 @@ adminRouter.put(
         },
         $setOnInsert: { key: "primary" },
       },
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: "after" },
     );
     res.json({ settings });
   }),
@@ -641,7 +645,7 @@ adminRouter.patch(
     const message = await ContactMessage.findByIdAndUpdate(
       req.params.id,
       { status },
-      { new: true },
+      { returnDocument: "after" },
     ).lean();
     if (!message) throw new HttpError(404, "Message not found.");
     res.json({ message });
@@ -680,7 +684,7 @@ adminRouter.patch(
     const subscriber = await Subscriber.findByIdAndUpdate(
       req.params.id,
       { active: Boolean(req.body.active) },
-      { new: true },
+      { returnDocument: "after" },
     ).lean();
     if (!subscriber) throw new HttpError(404, "Subscriber not found.");
     res.json({ subscriber });
@@ -776,7 +780,7 @@ adminRouter.delete(
     const coupon = await Coupon.findByIdAndUpdate(
       req.params.id,
       { active: false },
-      { new: true },
+      { returnDocument: "after" },
     );
     if (!coupon) throw new HttpError(404, "Coupon not found.");
     res.status(204).end();

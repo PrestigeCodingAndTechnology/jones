@@ -1,7 +1,10 @@
 import mongoose from "mongoose";
 import {
+  isValidShoeSize,
   legacySizeInventory,
-  STORE_SIZES,
+  MAX_SIZES_PER_PRODUCT,
+  MAX_SNEAKER_SIZE,
+  MIN_SNEAKER_SIZE,
   totalInventoryStock,
 } from "../services/inventory.js";
 
@@ -20,7 +23,12 @@ const sizeInventorySchema = new mongoose.Schema(
     size: {
       type: Number,
       required: true,
-      enum: STORE_SIZES,
+      min: MIN_SNEAKER_SIZE,
+      max: MAX_SNEAKER_SIZE,
+      validate: {
+        validator: isValidShoeSize,
+        message: "Sneaker sizes may have no more than two decimal places.",
+      },
     },
     stock: {
       type: Number,
@@ -49,20 +57,31 @@ const productSchema = new mongoose.Schema(
         validator: (inventory) =>
           Array.isArray(inventory) &&
           inventory.length > 0 &&
-          inventory.length <= STORE_SIZES.length &&
+          inventory.length <= MAX_SIZES_PER_PRODUCT &&
+          inventory.every((entry) => isValidShoeSize(entry.size)) &&
           new Set(inventory.map((entry) => entry.size)).size ===
             inventory.length &&
           totalInventoryStock(inventory) <= 100_000,
         message:
-          "Choose unique EU sizes from 40 to 45 and keep total stock at or below 100,000 pairs.",
+          `Choose up to ${MAX_SIZES_PER_PRODUCT} unique numeric sizes from ${MIN_SNEAKER_SIZE} to ${MAX_SNEAKER_SIZE} and keep total stock at or below 100,000 pairs.`,
       },
     },
     sizes: {
-      type: [{ type: Number, min: 40, max: 45 }],
+      type: [
+        {
+          type: Number,
+          min: MIN_SNEAKER_SIZE,
+          max: MAX_SNEAKER_SIZE,
+          validate: isValidShoeSize,
+        },
+      ],
       default: [40, 41, 42, 43, 44, 45],
       validate: {
         validator: (sizes) =>
-          sizes.length > 0 && new Set(sizes).size === sizes.length,
+          sizes.length > 0 &&
+          sizes.length <= MAX_SIZES_PER_PRODUCT &&
+          sizes.every(isValidShoeSize) &&
+          new Set(sizes).size === sizes.length,
         message: "Product sizes must be unique.",
       },
     },

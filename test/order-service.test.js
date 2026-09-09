@@ -10,8 +10,9 @@ const products = [
     image: "/assets/images/pics1.jpeg",
     price: 50_000,
     deliveryFee: 3_500,
-    sizes: [40, 41, 42, 43, 44, 45],
+    sizes: [39.5, 40, 41, 42, 43, 44, 45],
     sizeInventory: [
+      { size: 39.5, stock: 2 },
       { size: 40, stock: 3 },
       { size: 41, stock: 0 },
       { size: 42, stock: 4 },
@@ -19,7 +20,7 @@ const products = [
       { size: 44, stock: 1 },
       { size: 45, stock: 2 },
     ],
-    stock: 12,
+    stock: 14,
     active: true,
   },
   {
@@ -69,6 +70,27 @@ test("merges duplicate cart lines before validating stock", () => {
   );
   assert.equal(quote.items.length, 1);
   assert.equal(quote.items[0].quantity, 3);
+});
+
+test("quotes a custom decimal sneaker size", () => {
+  const quote = calculateQuote(
+    [{ productId: String(products[0]._id), size: 39.5, qty: 2 }],
+    products,
+  );
+  assert.equal(quote.items[0].size, 39.5);
+  assert.equal(quote.items[0].quantity, 2);
+  assert.equal(quote.total, 107_000);
+});
+
+test("rejects malformed custom sneaker sizes", () => {
+  assert.throws(
+    () =>
+      calculateQuote(
+        [{ productId: String(products[0]._id), size: 39.555, qty: 1 }],
+        products,
+      ),
+    /two decimal places/i,
+  );
 });
 
 test("rejects a cart quantity that exceeds real inventory", () => {

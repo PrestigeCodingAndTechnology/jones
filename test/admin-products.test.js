@@ -17,9 +17,9 @@ function productRecord(values = {}) {
     deliveryFee: 3_500,
     sizeInventory: [
       { size: 40, stock: 2 },
-      { size: 43, stock: 0 },
+      { size: 46.5, stock: 0 },
     ],
-    sizes: [40, 43],
+    sizes: [40, 46.5],
     stock: 2,
     image: "/assets/images/pics1.jpeg",
     fallbackImage: "/assets/images/pics1.jpeg",
@@ -44,6 +44,7 @@ test("administrator product routes create, edit and remove size inventory", asyn
   context.after(() => Object.assign(Product, originals));
 
   let savedPayload;
+  let updateOptions;
   Product.exists = async () => false;
   Product.find = () => ({
     sort() {
@@ -62,10 +63,12 @@ test("administrator product routes create, edit and remove size inventory", asyn
   };
 
   const editable = productRecord();
-  editable.save = async () => editable;
   Product.findById = async () => editable;
-  Product.findByIdAndUpdate = async (_id, update) =>
-    productRecord({ active: update.active ?? update.$set?.active ?? false });
+  Product.findByIdAndUpdate = async (_id, update, options) => {
+    updateOptions = options;
+    if (update.$set) return productRecord(update.$set);
+    return productRecord({ active: update.active ?? false });
+  };
 
   const app = express();
   app.use(express.json());
@@ -84,7 +87,7 @@ test("administrator product routes create, edit and remove size inventory", asyn
   assert.equal(readResponse.status, 200);
   const catalogue = await readResponse.json();
   assert.equal(catalogue.products.length, 1);
-  assert.deepEqual(catalogue.products[0].sizes, [40, 43]);
+  assert.deepEqual(catalogue.products[0].sizes, [40, 46.5]);
 
   const createResponse = await fetch(`${origin}/api/admin/products`, {
     method: "POST",
@@ -97,8 +100,8 @@ test("administrator product routes create, edit and remove size inventory", asyn
       comparePrice: 58_000,
       deliveryFee: 3_500,
       sizeInventory: [
-        { size: 40, stock: 3 },
-        { size: 43, stock: 0 },
+        { size: 39.5, stock: 3 },
+        { size: 46, stock: 0 },
       ],
       image: "/assets/images/pics1.jpeg",
       description: "A sneaker used to verify administrator catalogue CRUD.",
@@ -107,11 +110,11 @@ test("administrator product routes create, edit and remove size inventory", asyn
   });
   assert.equal(createResponse.status, 201);
   const created = await createResponse.json();
-  assert.deepEqual(created.product.sizes, [40, 43]);
+  assert.deepEqual(created.product.sizes, [39.5, 46]);
   assert.equal(created.product.stock, 3);
   assert.deepEqual(savedPayload.sizeInventory, [
-    { size: 40, stock: 3 },
-    { size: 43, stock: 0 },
+    { size: 39.5, stock: 3 },
+    { size: 46, stock: 0 },
   ]);
 
   const editResponse = await fetch(
@@ -128,7 +131,7 @@ test("administrator product routes create, edit and remove size inventory", asyn
         deliveryFee: 4_000,
         sizeInventory: [
           { size: 41, stock: 1 },
-          { size: 44, stock: 4 },
+          { size: 47.5, stock: 4 },
         ],
         image: "/assets/images/pics1.jpeg",
         description: "Updated catalogue data with a different set of sizes.",
@@ -138,9 +141,13 @@ test("administrator product routes create, edit and remove size inventory", asyn
   );
   assert.equal(editResponse.status, 200);
   const edited = await editResponse.json();
-  assert.deepEqual(edited.product.sizes, [41, 44]);
+  assert.deepEqual(edited.product.sizes, [41, 47.5]);
   assert.equal(edited.product.stock, 5);
   assert.equal(edited.product.deliveryFee, 4_000);
+  assert.deepEqual(updateOptions, {
+    returnDocument: "after",
+    runValidators: true,
+  });
 
   const invalidResponse = await fetch(`${origin}/api/admin/products`, {
     method: "POST",

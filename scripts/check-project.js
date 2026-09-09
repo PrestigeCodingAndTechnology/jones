@@ -84,6 +84,7 @@ const [
   emailCheck,
   inventoryService,
   inventoryMigration,
+  seedScript,
 ] = await Promise.all([
   readFile("assets/js/app.js", "utf8"),
   readFile("assets/css/styles.css", "utf8"),
@@ -101,6 +102,7 @@ const [
   readFile("scripts/check-email.js", "utf8"),
   readFile("src/services/inventory.js", "utf8"),
   readFile("src/services/inventoryMigration.js", "utf8"),
+  readFile("src/scripts/seed.js", "utf8"),
 ]);
 
 const noDemoPaymentSource = ![
@@ -121,6 +123,8 @@ const assertions = [
   [styles.includes(".site-header .brand-word{display:inline-flex}"), "mobile brand name override"],
   [client.includes("Delivery fee per pair"), "admin delivery-fee input"],
   [client.includes("Available sizes and stock"), "admin per-size inventory editor"],
+  [client.includes("data-add-custom-size") && client.includes("data-remove-custom-size"), "custom-size add/remove controls"],
+  [client.includes('type="submit" class="btn btn-acid">Save sneaker'), "explicit sneaker form submit control"],
   [client.includes("Shown as sold out"), "sold-out size management guidance"],
   [client.includes("size-btn") && client.includes("aria-disabled"), "customer sold-out size controls"],
   [client.includes("Product delivery fees"), "checkout delivery-fee summary"],
@@ -128,9 +132,11 @@ const assertions = [
   [productModel.includes("sizeInventory"), "product per-size inventory field"],
   [adminRoutes.includes("inventoryFields(body.sizeInventory)"), "validated per-size product CRUD"],
   [inventoryService.includes("inventoryStockForSize"), "size-specific availability checks"],
+  [inventoryService.includes("normalizeShoeSize") && inventoryService.includes("MAX_SIZES_PER_PRODUCT"), "custom-size server validation"],
   [inventoryMigration.includes("bulkWrite"), "legacy inventory migration"],
   [orderService.includes('"sizeInventory.$[selectedSize].stock"'), "atomic per-size stock updates"],
   [adminRoutes.includes('\"/products/:id\"'), "product update endpoint"],
+  [adminRoutes.includes("Product.findByIdAndUpdate") && adminRoutes.includes('returnDocument: "after", runValidators: true'), "atomic validated product editing"],
   [client.includes("/api/orders"), "live checkout connection"],
   [publicRoutes.includes('\"/orders/lookup\"'), "customer order tracking endpoint"],
   [publicRoutes.includes('\"/orders/quote\"'), "server-side cart quote endpoint"],
@@ -170,6 +176,7 @@ const assertions = [
   [paystackCheck.includes('paystackRequest') || paystackCheck.includes("verifyPaystackCredentials"), "live Paystack credential verification command"],
   [emailCheck.includes("verifyEmailConnection"), "SMTP credential verification command"],
   [noDemoPaymentSource, "demo payment paths removed"],
+  [![adminRoutes, publicRoutes, orderService, seedScript].some((source) => /\bnew\s*:\s*true\b/.test(source)), "deprecated Mongoose update options removed"],
 ];
 
 for (const [passed, name] of assertions) {

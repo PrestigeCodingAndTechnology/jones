@@ -1,5 +1,9 @@
 import { cleanInteger, HttpError } from "../utils/http.js";
-import { inventoryStockForSize, productInventory } from "./inventory.js";
+import {
+  inventoryStockForSize,
+  normalizeShoeSize,
+  productInventory,
+} from "./inventory.js";
 
 export function calculateQuote(cartItems, products) {
   if (
@@ -19,7 +23,7 @@ export function calculateQuote(cartItems, products) {
 
   for (const entry of cartItems) {
     const productId = String(entry?.productId || "");
-    const size = cleanInteger(entry?.size, "Size", { min: 40, max: 45 });
+    const size = normalizeShoeSize(entry?.size);
     const quantity = cleanInteger(entry?.qty ?? entry?.quantity, "Quantity", {
       min: 1,
       max: 10,

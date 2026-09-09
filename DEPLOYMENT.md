@@ -261,7 +261,7 @@ Run `npm run seed` only when you intentionally want to ensure the seed catalogue
 - A controlled refund has been confirmed before relying on refunds operationally.
 - SMTP owner/customer delivery has been confirmed.
 - `/ready` returns HTTP 200.
-- Product add/edit/delete, image, delivery fee and per-size stock controls work from admin.
+- Product add/edit/delete, image, delivery fee, default sizes and custom numeric/decimal size stock controls work from admin.
 - A size with quantity 0 is visible as sold out; an unchecked size is removed from the storefront.
 - Paid order fulfilment status changes and customer tracking work.
 - Promotions, contact messages, subscribers and analytics are visible in admin.

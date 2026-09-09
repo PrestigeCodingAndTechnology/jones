@@ -60,7 +60,7 @@ function orderTable(order) {
 }
 
 function emailShell(content) {
-  return `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#151515;line-height:1.55">${content}<p style="margin-top:28px;color:#666;font-size:12px">Jones Kicks • Premium sneakers • Sizes 40–45</p></div>`;
+  return `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#151515;line-height:1.55">${content}<p style="margin-top:28px;color:#666;font-size:12px">Jones Kicks • Premium sneakers • Sizes shown per pair</p></div>`;
 }
 
 function orderSummary(order, intro) {

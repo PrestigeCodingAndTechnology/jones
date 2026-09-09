@@ -1,7 +1,7 @@
 (function clientApp() {
   "use strict";
   const K = {
-    products: "jk_products_v6",
+    products: "jk_products_v7",
     cart: "jk_cart_v2",
     orders: "jk_orders_v2",
     views: "jk_views_v2",
@@ -201,20 +201,38 @@
       return p.id === id;
     });
   }
+  const DEFAULT_SNEAKER_SIZES = [40, 41, 42, 43, 44, 45];
+  const MAX_PRODUCT_SIZES = 30;
+  function normalizeClientSize(value) {
+    const blankOrBoolean =
+        value == null ||
+        typeof value === "boolean" ||
+        (typeof value === "string" && value.trim() === ""),
+      size = blankOrBoolean ? Number.NaN : Number(value),
+      rounded = Math.round(size * 100) / 100;
+    return Number.isFinite(size) &&
+      size >= 1 &&
+      size <= 100 &&
+      Math.abs(size - rounded) <= Number.EPSILON * 100
+      ? rounded
+      : null;
+  }
+  function formatSize(value) {
+    const size = normalizeClientSize(value);
+    return size == null ? "" : String(size);
+  }
   function sizeInventoryFor(p) {
     if (p && Array.isArray(p.sizeInventory) && p.sizeInventory.length) {
       return p.sizeInventory
         .map(function (entry) {
           return {
-            size: Number(entry.size),
+            size: normalizeClientSize(entry.size),
             stock: Math.max(0, Math.floor(Number(entry.stock || 0))),
           };
         })
         .filter(function (entry, index, entries) {
           return (
-            Number.isInteger(entry.size) &&
-            entry.size >= 40 &&
-            entry.size <= 45 &&
+            entry.size != null &&
             entries.findIndex(function (candidate) {
               return candidate.size === entry.size;
             }) === index
@@ -225,10 +243,10 @@
         });
     }
     const sizes = Array.isArray(p && p.sizes) && p.sizes.length
-        ? p.sizes.map(Number).filter(function (size) {
-            return Number.isInteger(size) && size >= 40 && size <= 45;
+        ? p.sizes.map(normalizeClientSize).filter(function (size) {
+            return size != null;
           })
-        : [40, 41, 42, 43, 44, 45],
+        : DEFAULT_SNEAKER_SIZES,
       total = Math.max(0, Math.floor(Number((p && p.stock) || 0))),
       base = sizes.length ? Math.floor(total / sizes.length) : 0,
       remainder = sizes.length ? total % sizes.length : 0;
@@ -237,8 +255,9 @@
     });
   }
   function stockForSize(p, size) {
+    const normalizedSize = normalizeClientSize(size);
     const entry = sizeInventoryFor(p).find(function (candidate) {
-      return candidate.size === Number(size);
+      return candidate.size === normalizedSize;
     });
     return entry ? entry.stock : 0;
   }
@@ -250,15 +269,15 @@
           '<button class="size-btn ' +
           (soldOut ? "sold-out" : "") +
           '" data-size="' +
-          entry.size +
+          formatSize(entry.size) +
           '" type="button" ' +
           (soldOut
             ? 'disabled aria-disabled="true" title="Size ' +
-              entry.size +
+              formatSize(entry.size) +
               ' is sold out"'
-            : 'aria-label="Select EU size ' + entry.size + '"') +
+            : 'aria-label="Select EU size ' + formatSize(entry.size) + '"') +
           "><span>" +
-          entry.size +
+          formatSize(entry.size) +
           "</span>" +
           (soldOut ? "<small>Sold out</small>" : "") +
           "</button>"
@@ -269,7 +288,7 @@
   function sizeStockSummary(p) {
     return sizeInventoryFor(p)
       .map(function (entry) {
-        return "EU " + entry.size + ": " + entry.stock;
+        return "EU " + formatSize(entry.size) + ": " + entry.stock;
       })
       .join(" • ");
   }
@@ -279,23 +298,8 @@
         return (
           '<span class="size-stock-badge ' +
           (entry.stock < 1 ? "sold-out" : "") +
-          '">' +
-          entry.size +
-          " × " +
-          entry.stock +
-          "</span>"
-        );
-      })
-      .join("");
-  }
-  function sizeStockBadges(p) {
-    return sizeInventoryFor(p)
-      .map(function (entry) {
-        return (
-          '<span class="size-stock-badge ' +
-          (entry.stock < 1 ? "sold-out" : "") +
           '">EU ' +
-          entry.size +
+          formatSize(entry.size) +
           " · " +
           entry.stock +
           "</span>"
@@ -528,7 +532,7 @@
       return path === p || (p !== "/" && path.startsWith(p)) ? "active" : "";
     };
     document.getElementById("site-header").innerHTML =
-      '<div class="announcement">New-season drops available • Select sizes 40–45 • Order securely online</div><div class="site-header"><div class="container header-inner"><button class="header-action menu-btn" data-menu aria-label="Open menu">' +
+      '<div class="announcement">New-season drops available • Product-specific sizes • Order securely online</div><div class="site-header"><div class="container header-inner"><button class="header-action menu-btn" data-menu aria-label="Open menu">' +
       icon("menu") +
       '</button><a class="brand" href="' +
       href("/") +
@@ -617,7 +621,7 @@
       new Date().getFullYear() +
       " " +
       esc(state.settings.storeName || "Jones Kicks") +
-      ". All rights reserved.</span><span>Premium sneakers • Sizes 40–45</span></div></div></footer>";
+      ". All rights reserved.</span><span>Premium sneakers • Sizes shown per pair</span></div></div></footer>";
   }
   function slide(i, k, t, o, c, image, fb) {
     return (
@@ -674,14 +678,14 @@
       ) +
       slide(
         2,
-        "Sizes 40–45",
+        "Sizes for every pair",
         "FIND YOUR",
         "PERFECT PAIR",
         "Choose your size, add delivery details and place your order in a few simple steps.",
         imageRoot + "pics21.jpeg",
         fallback[7],
       ) +
-      '<div class="hero-meta"><div class="hero-pager"><button class="hero-dot active" data-hero-dot="0"></button><button class="hero-dot" data-hero-dot="1"></button><button class="hero-dot" data-hero-dot="2"></button></div><div class="hero-stat"><strong>40–45</strong><span>Available<br>sizes</span></div></div></section><div class="marquee"><div class="marquee-track"><span>Fresh drops</span><span>Premium selection</span><span>Secure ordering</span><span>Size 40–45</span><span>Style without limits</span><span>Fresh drops</span><span>Premium selection</span><span>Secure ordering</span><span>Size 40–45</span><span>Style without limits</span></div></div><section class="section-sm"><div class="container"><div class="trust-grid" data-aos="fade-up"><div class="trust-item"><span class="trust-icon">✦</span><h3>Freshly curated</h3><p>A focused edit of standout everyday and limited silhouettes.</p></div><div class="trust-item"><span class="trust-icon">⌁</span><h3>Easy size selection</h3><p>Choose your preferred EU size from 40 through 45.</p></div><div class="trust-item"><span class="trust-icon">✓</span><h3>Smooth ordering</h3><p>Bag your pair, add delivery details and confirm in minutes.</p></div><div class="trust-item"><span class="trust-icon">↗</span><h3>Human support</h3><p>Need help? Continue the conversation directly on WhatsApp.</p></div></div></div></section><section class="section"><div class="container"><div class="section-head"><div><p class="eyebrow">Shop the drop</p><h2 class="display section-title">Fresh on the shelf</h2></div><p class="section-copy">Meet the pairs currently setting the pace. Choose a sneaker, select your size and build your rotation.</p></div><div class="product-grid">' +
+      '<div class="hero-meta"><div class="hero-pager"><button class="hero-dot active" data-hero-dot="0"></button><button class="hero-dot" data-hero-dot="1"></button><button class="hero-dot" data-hero-dot="2"></button></div><div class="hero-stat"><strong>EU</strong><span>Custom<br>sizes</span></div></div></section><div class="marquee"><div class="marquee-track"><span>Fresh drops</span><span>Premium selection</span><span>Secure ordering</span><span>Product-specific sizes</span><span>Style without limits</span><span>Fresh drops</span><span>Premium selection</span><span>Secure ordering</span><span>Product-specific sizes</span><span>Style without limits</span></div></div><section class="section-sm"><div class="container"><div class="trust-grid" data-aos="fade-up"><div class="trust-item"><span class="trust-icon">✦</span><h3>Freshly curated</h3><p>A focused edit of standout everyday and limited silhouettes.</p></div><div class="trust-item"><span class="trust-icon">⌁</span><h3>Easy size selection</h3><p>Choose from every EU size currently offered for the sneaker.</p></div><div class="trust-item"><span class="trust-icon">✓</span><h3>Smooth ordering</h3><p>Bag your pair, add delivery details and confirm in minutes.</p></div><div class="trust-item"><span class="trust-icon">↗</span><h3>Human support</h3><p>Need help? Continue the conversation directly on WhatsApp.</p></div></div></div></section><section class="section"><div class="container"><div class="section-head"><div><p class="eyebrow">Shop the drop</p><h2 class="display section-title">Fresh on the shelf</h2></div><p class="section-copy">Meet the pairs currently setting the pace. Choose a sneaker, select your size and build your rotation.</p></div><div class="product-grid">' +
       featured.map(card).join("") +
       '</div><div style="text-align:center;margin-top:40px"><a class="btn btn-outline" href="' +
       href("/shop") +
@@ -709,7 +713,7 @@
       imageRoot +
       'logo.jpeg" data-fallback="' +
       fallback[1] +
-      '" alt="Jones Kicks culture"></div><div class="story-card"><strong>20+</strong><span>fresh styles in the current collection</span></div></div><div data-aos="fade-left"><p class="eyebrow">More than footwear</p><h2 class="display story-title">Your plug for premium sneakers.</h2><p class="story-copy">Jones Kicks was built for people who want the freshest pairs without unnecessary stress. From iconic classics to new-season releases, every selection is made to help you step up your style.</p><ul class="story-list"><li>Curated silhouettes for modern street style</li><li>Simple sizing across EU 40–45</li><li>Direct support before and after your order</li></ul><a class="btn btn-acid" href="' +
+      '" alt="Jones Kicks culture"></div><div class="story-card"><strong>20+</strong><span>fresh styles in the current collection</span></div></div><div data-aos="fade-left"><p class="eyebrow">More than footwear</p><h2 class="display story-title">Your plug for premium sneakers.</h2><p class="story-copy">Jones Kicks was built for people who want the freshest pairs without unnecessary stress. From iconic classics to new-season releases, every selection is made to help you step up your style.</p><ul class="story-list"><li>Curated silhouettes for modern street style</li><li>Every available size shown before checkout</li><li>Direct support before and after your order</li></ul><a class="btn btn-acid" href="' +
       href("/about") +
       '" data-route="/about">Read our story</a></div></div></section><section class="section"><div class="container"><div class="testimonial-grid"><div class="quote-card" data-aos="fade-up"><div class="quote-stars">★★★★★</div><p class="quote-text">“The process was straightforward, the size was right and the pair looked even better in person. Jones Kicks is now my first stop.”</p><div class="quote-person"><span class="avatar">TO</span><div><strong>Tobi O.</strong><span>Verified customer</span></div></div></div><div class="newsletter-card" data-aos="fade-up"><h3>Be first to the next drop.</h3><p>Get new-arrival updates and private offers sent to your WhatsApp.</p><form class="newsletter-form" id="newsletter-form"><input name="phone" inputmode="tel" placeholder="Your WhatsApp number" required><button class="btn btn-light">Join</button></form></div></div></div></section>'
     );
@@ -778,7 +782,7 @@
       (state.sort === "high" ? "selected" : "") +
       '>Price: high</option></select></div></div><section class="section-sm"><div class="container"><div class="results-line"><span>' +
       list.length +
-      ' sneakers found</span><span>Available sizes: EU 40–45</span></div><div class="product-grid">' +
+      ' sneakers found</span><span>Available sizes are shown on every sneaker</span></div><div class="product-grid">' +
       (list.length
         ? list.map(card).join("")
         : '<div class="empty-state"><h2>No sneakers found</h2><p>Try another keyword or clear the current filter.</p><button class="btn btn-outline" data-clear-filter>Clear filters</button></div>') +
@@ -1111,7 +1115,7 @@
       imageRoot +
       'pics4.jpeg" data-fallback="' +
       fallback[2] +
-      '" alt="Jones Kicks style"><div class="about-badge"><strong>40–45</strong><span>Every available EU size, clearly displayed</span></div></div></section><section class="section"><div class="container"><div class="section-head"><div><p class="eyebrow">What guides us</p><h2 class="display section-title">Made for better steps.</h2></div><p class="section-copy">A focused collection, a clearer way to choose and a human team when you need help.</p></div><div class="values-grid"><article class="value-card"><span class="value-no">01</span><h3>Fresh selection</h3><p>Wearable classics, standout drops and versatile daily pairs.</p></article><article class="value-card"><span class="value-no">02</span><h3>Simple experience</h3><p>From selecting size to adding your address, ordering feels quick and clear.</p></article><article class="value-card"><span class="value-no">03</span><h3>Personal support</h3><p>Questions about a pair or size? We are one WhatsApp message away.</p></article></div></div></section>'
+      '" alt="Jones Kicks style"><div class="about-badge"><strong>EU</strong><span>Every available size, clearly displayed</span></div></div></section><section class="section"><div class="container"><div class="section-head"><div><p class="eyebrow">What guides us</p><h2 class="display section-title">Made for better steps.</h2></div><p class="section-copy">A focused collection, a clearer way to choose and a human team when you need help.</p></div><div class="values-grid"><article class="value-card"><span class="value-no">01</span><h3>Fresh selection</h3><p>Wearable classics, standout drops and versatile daily pairs.</p></article><article class="value-card"><span class="value-no">02</span><h3>Simple experience</h3><p>From selecting size to adding your address, ordering feels quick and clear.</p></article><article class="value-card"><span class="value-no">03</span><h3>Personal support</h3><p>Questions about a pair or size? We are one WhatsApp message away.</p></article></div></div></section>'
     );
   }
   function contact() {
@@ -2114,38 +2118,104 @@
     }
   }
 
+  function sizeInventoryEditorRow(size, entry) {
+    const normalized = normalizeClientSize(size),
+      label = formatSize(normalized),
+      enabled = Boolean(entry),
+      custom = !DEFAULT_SNEAKER_SIZES.includes(normalized),
+      stock = enabled ? entry.stock : 0;
+    return (
+      '<div class="size-inventory-row ' +
+      (custom ? "custom-size-row" : "") +
+      '" data-size-row data-size-value="' +
+      esc(label) +
+      '"><label class="size-enable-label"><input class="size-enable" data-size-toggle type="checkbox" ' +
+      (enabled ? "checked" : "") +
+      '><span class="size-inventory-number">EU ' +
+      esc(label) +
+      '</span></label><span class="size-inventory-status">' +
+      (enabled ? (stock < 1 ? "Shown as sold out" : "Available") : "Hidden") +
+      '</span><input class="size-stock-input" data-size-stock type="number" min="0" max="100000" step="1" inputmode="numeric" value="' +
+      esc(stock) +
+      '" aria-label="Stock for EU size ' +
+      esc(label) +
+      '" ' +
+      (enabled ? "required" : "disabled") +
+      '><span class="size-inventory-unit">pairs</span>' +
+      (custom
+        ? '<button class="remove-custom-size" type="button" data-remove-custom-size aria-label="Remove custom size ' +
+          esc(label) +
+          '">×</button>'
+        : "") +
+      "</div>"
+    );
+  }
+  function showProductFormError(form, message) {
+    const notice = form && form.querySelector("[data-product-form-error]");
+    if (notice) {
+      notice.hidden = !message;
+      notice.textContent = message || "";
+    }
+    if (message) toast(message, "!");
+  }
+  function addCustomProductSize() {
+    const input = document.getElementById("custom-sneaker-size"),
+      form = input && input.closest("form"),
+      editor = form && form.querySelector("[data-size-inventory-editor]"),
+      size = normalizeClientSize(input && input.value);
+    if (!form || !editor) return;
+    if (size == null) {
+      showProductFormError(
+        form,
+        "Enter a custom numeric size from 1 to 100, using no more than two decimal places.",
+      );
+      input.focus();
+      return;
+    }
+    const rows = Array.from(editor.querySelectorAll("[data-size-row]"));
+    if (rows.length >= MAX_PRODUCT_SIZES) {
+      showProductFormError(form, "A sneaker can have at most 30 sizes.");
+      return;
+    }
+    const duplicate = rows.some(function (row) {
+      return normalizeClientSize(row.dataset.sizeValue) === size;
+    });
+    if (duplicate) {
+      showProductFormError(
+        form,
+        "EU size " + formatSize(size) + " is already listed.",
+      );
+      return;
+    }
+    editor.insertAdjacentHTML(
+      "beforeend",
+      sizeInventoryEditorRow(size, { size: size, stock: 0 }),
+    );
+    input.value = "";
+    showProductFormError(form, "");
+    const addedRows = editor.querySelectorAll("[data-size-row]");
+    addedRows[addedRows.length - 1]?.querySelector("[data-size-stock]")?.focus();
+  }
   function editProduct(id) {
     const p = id ? product(id) : null;
     const currentInventory = p ? sizeInventoryFor(p) : [],
-      sizeEditor = [40, 41, 42, 43, 44, 45]
+      editorSizes = Array.from(
+        new Set(
+          DEFAULT_SNEAKER_SIZES.concat(
+            currentInventory.map(function (entry) {
+              return entry.size;
+            }),
+          ),
+        ),
+      ).sort(function (left, right) {
+        return left - right;
+      }),
+      sizeEditor = editorSizes
         .map(function (size) {
           const entry = currentInventory.find(function (item) {
-              return item.size === size;
-            }),
-            enabled = Boolean(entry);
-          return (
-            '<label class="size-inventory-row"><input class="size-enable" name="size_enabled_' +
-            size +
-            '" data-size-toggle="' +
-            size +
-            '" type="checkbox" ' +
-            (enabled ? "checked" : "") +
-            '><span class="size-inventory-number">EU ' +
-            size +
-            '</span><span class="size-inventory-status">' +
-            (enabled ? (entry.stock < 1 ? "Shown as sold out" : "Available") : "Hidden") +
-            '</span><input class="size-stock-input" name="size_stock_' +
-            size +
-            '" data-size-stock="' +
-            size +
-            '" type="number" min="0" max="100000" step="1" inputmode="numeric" value="' +
-            esc(enabled ? entry.stock : 0) +
-            '" aria-label="Stock for EU size ' +
-            size +
-            '" ' +
-            (enabled ? "required" : "disabled") +
-            '><span class="size-inventory-unit">pairs</span></label>'
-          );
+            return item.size === size;
+          });
+          return sizeInventoryEditorRow(size, entry);
         })
         .join("");
     state.upload = "";
@@ -2166,29 +2236,29 @@
         esc(p ? p.comparePrice : "") +
         '"></div><div class="field"><label>Delivery fee per pair (₦)</label><input name="deliveryFee" type="number" min="0" step="1" required value="' +
         esc(p ? p.deliveryFee : 0) +
-        '"><small>This exact fee follows the product into cart, checkout and the order.</small></div><div class="field full"><label>Available sizes and stock</label><div class="size-inventory-editor">' +
+        '"><small>This exact fee follows the product into cart, checkout and the order.</small></div><div class="field full"><label>Available sizes and stock</label><div class="size-inventory-editor" data-size-inventory-editor>' +
         sizeEditor +
-        '</div><small>Check every size you offer. Enter 0 to keep a size visible as sold out; uncheck it to remove it from the storefront.</small></div><div class="field full"><label>Image URL</label><input name="image" value="' +
+        '</div><div class="custom-size-adder"><div><strong>Add a custom size</strong><small>Examples: 39, 39.5, 46 or 47.5</small></div><input id="custom-sneaker-size" type="number" min="1" max="100" step="0.01" inputmode="decimal" placeholder="e.g. 46.5" aria-label="Custom sneaker size"><button class="btn btn-outline" type="button" data-add-custom-size>Add size</button></div><small>Check every size you offer. Enter 0 to keep a size visible as sold out; uncheck it to hide it. Custom sizes can also be removed completely.</small></div><div class="field full"><label>Image URL</label><input name="image" value="' +
         esc(p ? p.image : "") +
         '"></div><div class="field full"><label>Or upload product image</label><input id="product-image-upload" type="file" accept="image/png,image/jpeg,image/webp"><small>JPG, PNG or WebP; maximum 1.5 MB.</small></div><div class="field full"><label>Description</label><textarea name="description" required>' +
         esc(p ? p.description : "") +
         '</textarea></div><div class="field full"><label class="check-row"><input name="featured" type="checkbox" ' +
         (!p || p.featured ? "checked" : "") +
-        '> <span>Feature this sneaker in priority storefront listings</span></label></div></div><div class="modal-actions"><button type="button" class="btn btn-outline" data-layer-close>Cancel</button><button class="btn btn-acid">Save sneaker</button></div></form>',
+        '> <span>Feature this sneaker in priority storefront listings</span></label></div></div><p class="form-error" data-product-form-error role="alert" hidden></p><div class="modal-actions"><button type="button" class="btn btn-outline" data-layer-close>Cancel</button><button type="submit" class="btn btn-acid">Save sneaker</button></div></form>',
       "admin-modal",
     );
   }
   async function saveProduct(form) {
     const d = new FormData(form),
       old = product(String(d.get("id"))),
-      sizeInventory = [40, 41, 42, 43, 44, 45]
-        .filter(function (size) {
-          return d.get("size_enabled_" + size) === "on";
+      sizeInventory = Array.from(form.querySelectorAll("[data-size-row]"))
+        .filter(function (row) {
+          return Boolean(row.querySelector("[data-size-toggle]")?.checked);
         })
-        .map(function (size) {
+        .map(function (row) {
           return {
-            size: size,
-            stock: Number(d.get("size_stock_" + size)),
+            size: normalizeClientSize(row.dataset.sizeValue),
+            stock: Number(row.querySelector("[data-size-stock]")?.value),
           };
         }),
       payload = {
@@ -2205,7 +2275,24 @@
         featured: d.get("featured") === "on",
       };
     if (!sizeInventory.length) {
-      toast("Choose at least one sneaker size.", "!");
+      showProductFormError(form, "Choose at least one sneaker size.");
+      return;
+    }
+    if (
+      sizeInventory.length > MAX_PRODUCT_SIZES ||
+      sizeInventory.some(function (entry) {
+        return entry.size == null;
+      }) ||
+      new Set(
+        sizeInventory.map(function (entry) {
+          return entry.size;
+        }),
+      ).size !== sizeInventory.length
+    ) {
+      showProductFormError(
+        form,
+        "Use no more than 30 unique numeric sizes from 1 to 100.",
+      );
       return;
     }
     if (
@@ -2213,7 +2300,10 @@
         return !Number.isInteger(entry.stock) || entry.stock < 0 || entry.stock > 100000;
       })
     ) {
-      toast("Enter a valid whole-number stock quantity for every selected size.", "!");
+      showProductFormError(
+        form,
+        "Enter a valid whole-number stock quantity for every selected size.",
+      );
       return;
     }
     if (
@@ -2221,9 +2311,10 @@
         return total + entry.stock;
       }, 0) > 100000
     ) {
-      toast("Total stock cannot exceed 100,000 pairs.", "!");
+      showProductFormError(form, "Total stock cannot exceed 100,000 pairs.");
       return;
     }
+    showProductFormError(form, "");
     if (form.dataset.saving === "true") return;
     const submitButton = form.querySelector('button[type="submit"], button:not([type])'),
       submitLabel = submitButton ? submitButton.textContent : "";
@@ -2241,13 +2332,16 @@
             { method: old ? "PATCH" : "POST", body: payload },
           ),
           p = result.product;
-        if (old) state.products[state.products.indexOf(old)] = p;
+        const savedIndex = state.products.findIndex(function (item) {
+          return String(item.id) === String(p.id);
+        });
+        if (savedIndex >= 0) state.products[savedIndex] = p;
         else state.products.unshift(p);
         close();
         toast(old ? "Sneaker updated." : "New sneaker added.", "✓");
         renderAdmin();
       } catch (error) {
-        toast(error.message, "!");
+        showProductFormError(form, error.message);
       } finally {
         form.dataset.saving = "false";
         if (submitButton) {
@@ -2277,7 +2371,10 @@
       { image: state.upload || payload.image },
     );
     delete p.imageData;
-    if (old) state.products[state.products.indexOf(old)] = p;
+    const localIndex = state.products.findIndex(function (item) {
+      return String(item.id) === String(p.id);
+    });
+    if (localIndex >= 0) state.products[localIndex] = p;
     else state.products.unshift(p);
     if (save(K.products, state.products)) {
       close();
@@ -3015,9 +3112,12 @@
       showHero(Number(t.dataset.heroDot));
     } else if (t.matches("[data-quick]")) quick(t.dataset.quick);
     else if (t.matches("[data-size]")) {
-      state.size = Number(t.dataset.size);
+      state.size = normalizeClientSize(t.dataset.size);
       document.querySelectorAll("[data-size]").forEach(function (b) {
-        b.classList.toggle("active", Number(b.dataset.size) === state.size);
+        b.classList.toggle(
+          "active",
+          normalizeClientSize(b.dataset.size) === state.size,
+        );
       });
       document.querySelectorAll("[data-add]").forEach(function (b) {
         b.disabled = false;
@@ -3052,6 +3152,13 @@
       void loadAdminTab(t.dataset.adminTab);
     else if (t.matches("[data-admin-logout]")) void logout();
     else if (t.matches("[data-new-product]")) editProduct();
+    else if (t.matches("[data-add-custom-size]")) addCustomProductSize();
+    else if (t.matches("[data-remove-custom-size]")) {
+      const row = t.closest("[data-size-row]"),
+        form = t.closest("form");
+      if (row) row.remove();
+      showProductFormError(form, "");
+    }
     else if (t.matches("[data-edit-product]"))
       editProduct(t.dataset.editProduct);
     else if (t.matches("[data-delete-product]"))
@@ -3119,11 +3226,9 @@
       render();
     }
     if (e.target.matches("[data-size-toggle]")) {
-      const size = e.target.dataset.sizeToggle,
-        input = document.querySelector('[data-size-stock="' + size + '"]'),
-        status = e.target
-          .closest(".size-inventory-row")
-          ?.querySelector(".size-inventory-status");
+      const row = e.target.closest("[data-size-row]"),
+        input = row?.querySelector("[data-size-stock]"),
+        status = row?.querySelector(".size-inventory-status");
       if (input) {
         input.disabled = !e.target.checked;
         input.required = e.target.checked;
@@ -3166,7 +3271,10 @@
     if (e.target === e.currentTarget) close();
   });
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") close();
+    if (e.key === "Enter" && e.target.id === "custom-sneaker-size") {
+      e.preventDefault();
+      addCustomProductSize();
+    } else if (e.key === "Escape") close();
   });
   window.addEventListener("popstate", render);
   window.addEventListener("hashchange", render);

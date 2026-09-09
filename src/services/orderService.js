@@ -213,7 +213,7 @@ export async function finalizePaidOrder(order, providerData = {}) {
         "payment.processingAt": new Date(),
       },
     },
-    { new: true },
+    { returnDocument: "after" },
   ).select("+payment.providerResponse +payment.authorizationCode");
 
   if (!claimed) {

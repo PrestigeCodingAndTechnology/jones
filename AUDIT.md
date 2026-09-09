@@ -1,16 +1,18 @@
 # Jones Kicks Production Audit
 
 Audit date: 9 September 2026
-Build: 6.0.0 — Product CRUD and per-size inventory release
+Build: 7.0.0 — Atomic sneaker editing and custom-size inventory release
 
 ## Scope reviewed
 
 Storefront, product catalogue, mobile branding, cart, per-product delivery fees, checkout, Paystack initialization/verification/webhooks/refunds, order lifecycle, inventory handling, customer order tracking, administrator authentication, product CRUD, promotions, contact messages, subscribers, analytics, email integration, upload validation, production environment controls and deployment configuration.
 
-## Product CRUD and inventory changes completed in this release
+## Product CRUD and inventory changes completed
 
 - Repaired administrator product create, edit and soft-delete API/UI flows and added route-level CRUD tests.
-- Replaced the fixed 40–45 list and single shared stock input with selectable stock per size.
+- Replaced the fixed-size restriction with default 40–45 controls plus custom numeric/decimal sizes, each with independent stock.
+- Replaced the edit document-save path with a validated atomic update so payment-time inventory version changes cannot leave the Save button failing.
+- Replaced every deprecated Mongoose `new: true` update option with `returnDocument: "after"`.
 - Quantity `0` keeps a selected size visible as sold out; removing the selection hides that size from customers.
 - Persisted canonical `sizeInventory` entries in MongoDB and server-derived legacy `sizes`/total `stock` values.
 - Added an idempotent startup migration that preserves the total stock of older products while distributing it across their sizes.
@@ -55,10 +57,10 @@ Storefront, product catalogue, mobile branding, cart, per-product delivery fees,
 ## Verification performed in this workspace
 
 - Clean `npm ci`: PASS.
-- `npm run check`: PASS — 56 required files and 52 critical feature assertions.
-- `npm test`: PASS — 33 tests, 33 passed, 0 failed.
-- Product-route tests cover administrator create/read/edit/delete behavior and persisted size inventory.
-- Inventory tests cover schema normalization, legacy migration, exact-size quoting, sold-out rejection, atomic decrement and cancellation restock.
+- `npm run check`: PASS — 56 required files and 57 critical feature assertions.
+- `npm test`: PASS — 36 tests, 36 passed, 0 failed.
+- Product-route tests cover administrator create/read/edit/delete behavior, atomic edit options and persisted default/custom size inventory.
+- Inventory tests cover custom decimal sizes, schema normalization, legacy migration, exact-size quoting, sold-out rejection, atomic decrement and cancellation restock.
 - Paystack tests cover exact amount/reference/currency/customer matching, environment mismatch rejection and safe checkout-origin validation.
 - Production environment tests cover HTTPS, matching live keys, same-origin callback and required SMTP configuration.
 - `npm audit --omit=dev`: PASS — 0 known vulnerabilities.

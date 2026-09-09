@@ -1,4 +1,9 @@
 import mongoose from "mongoose";
+import {
+  isValidShoeSize,
+  MAX_SNEAKER_SIZE,
+  MIN_SNEAKER_SIZE,
+} from "../services/inventory.js";
 
 const orderItemSchema = new mongoose.Schema(
   {
@@ -10,7 +15,16 @@ const orderItemSchema = new mongoose.Schema(
     name: { type: String, required: true },
     slug: { type: String, required: true },
     image: { type: String, required: true },
-    size: { type: Number, required: true, min: 40, max: 45 },
+    size: {
+      type: Number,
+      required: true,
+      min: MIN_SNEAKER_SIZE,
+      max: MAX_SNEAKER_SIZE,
+      validate: {
+        validator: isValidShoeSize,
+        message: "The selected sneaker size is invalid.",
+      },
+    },
     quantity: { type: Number, required: true, min: 1, max: 10 },
     unitPrice: { type: Number, required: true, min: 0 },
     unitDeliveryFee: { type: Number, required: true, min: 0 },

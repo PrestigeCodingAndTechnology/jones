@@ -5,7 +5,7 @@ Jones Kicks is a complete sneaker ecommerce application built with Node.js, Expr
 ## Customer features
 
 - Responsive premium storefront with hero slider, catalogue, search, category filters, sorting, quick view and product pages.
-- Per-product EU sizes 40–45 with live stock per size. Sold-out sizes remain visible but disabled, while sizes the administrator removes are hidden.
+- Per-product EU sizes with live stock per size, including custom numeric and decimal sizes outside the default 40–45 set. Sold-out sizes remain visible but disabled, while sizes the administrator removes are hidden.
 - Wishlist/favourites and persistent shopping bag.
 - Server-authoritative pricing. The browser cannot choose product prices, delivery fees, discounts or final totals.
 - Custom delivery fee per product, editable from the administrator product form and charged per pair.
@@ -26,7 +26,7 @@ Jones Kicks is a complete sneaker ecommerce application built with Node.js, Expr
 - Login/API rate limiting, CSP/security headers and request-ID handling.
 - Dashboard metrics for products, orders, paid revenue, visitors, low stock, messages, subscribers and promotions.
 - Product create/edit/soft-delete, featured flag, prices, description, image and per-product delivery-fee management.
-- Size-inventory editor for independently adding/removing EU sizes 40–45 and setting the stock quantity for each size. Total product stock is server-derived.
+- Size-inventory editor with default EU 40–45 controls plus validated custom sizes from 1–100 (up to two decimal places), independent stock quantities and complete add/remove controls. Total product stock is server-derived.
 - Signature-validated JPG/PNG/WebP image uploads.
 - Order centre with customer/delivery details, line items, discounts, payment/refund state and status history.
 - Fulfilment workflow with unpaid-order guards, cancellation controls and inventory restoration.

@@ -1,4 +1,7 @@
 export const STORE_SIZES = Object.freeze([40, 41, 42, 43, 44, 45]);
+export const MIN_SNEAKER_SIZE = 1;
+export const MAX_SNEAKER_SIZE = 100;
+export const MAX_SIZES_PER_PRODUCT = 30;
 
 const MAX_STOCK_PER_SIZE = 100_000;
 const MAX_TOTAL_STOCK = 100_000;
@@ -10,19 +13,51 @@ function inventoryError(message) {
   return error;
 }
 
+export function normalizeShoeSize(value) {
+  const blankOrBoolean =
+    value == null ||
+    typeof value === "boolean" ||
+    (typeof value === "string" && value.trim() === "");
+  const size = blankOrBoolean ? Number.NaN : Number(value);
+  const rounded = Math.round(size * 100) / 100;
+  if (
+    !Number.isFinite(size) ||
+    size < MIN_SNEAKER_SIZE ||
+    size > MAX_SNEAKER_SIZE ||
+    Math.abs(size - rounded) > Number.EPSILON * 100
+  ) {
+    throw inventoryError(
+      `Sneaker size must be a number from ${MIN_SNEAKER_SIZE} to ${MAX_SNEAKER_SIZE} with no more than two decimal places.`,
+    );
+  }
+  return rounded;
+}
+
+export function isValidShoeSize(value) {
+  try {
+    normalizeShoeSize(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeSizeInventory(value, { required = true } = {}) {
   if (!Array.isArray(value)) {
     throw inventoryError("Choose at least one sneaker size and enter its stock.");
   }
 
+  if (value.length > MAX_SIZES_PER_PRODUCT) {
+    throw inventoryError(
+      `A sneaker can have at most ${MAX_SIZES_PER_PRODUCT} sizes.`,
+    );
+  }
+
   const seen = new Set();
   const inventory = value.map((entry) => {
-    const size = Number(entry?.size);
+    const size = normalizeShoeSize(entry?.size);
     const stock = Number(entry?.stock);
 
-    if (!Number.isInteger(size) || !STORE_SIZES.includes(size)) {
-      throw inventoryError("Sneaker sizes must be whole EU sizes from 40 to 45.");
-    }
     if (seen.has(size)) {
       throw inventoryError(`Size ${size} was selected more than once.`);
     }
@@ -61,7 +96,12 @@ export function totalInventoryStock(inventory = []) {
 }
 
 export function inventoryStockForSize(product, requestedSize) {
-  const size = Number(requestedSize);
+  let size;
+  try {
+    size = normalizeShoeSize(requestedSize);
+  } catch {
+    return 0;
+  }
   const entry = productInventory(product).find((item) => item.size === size);
   return entry ? entry.stock : 0;
 }
@@ -75,7 +115,7 @@ export function productInventory(product = {}) {
       }))
       .filter(
         (entry, index, entries) =>
-          STORE_SIZES.includes(entry.size) &&
+          isValidShoeSize(entry.size) &&
           entries.findIndex((item) => item.size === entry.size) === index,
       )
       .sort((left, right) => left.size - right.size);
@@ -89,7 +129,7 @@ export function legacySizeInventory(sizes, totalStock = 0) {
     new Set(
       (Array.isArray(sizes) && sizes.length ? sizes : STORE_SIZES)
         .map(Number)
-        .filter((size) => Number.isInteger(size) && STORE_SIZES.includes(size)),
+        .filter(isValidShoeSize),
     ),
   ).sort((left, right) => left - right);
 
