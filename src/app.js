@@ -55,6 +55,11 @@ export function createApp() {
     res.json({
       status: "ok",
       service: "jones-kicks",
+      database: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+      payments: env.paystackConfigured
+        ? `paystack-${env.paystackEnvironment}`
+        : "paystack-unconfigured",
+      email: env.smtpConfigured ? "smtp-configured" : "smtp-unconfigured",
       timestamp: new Date().toISOString(),
     });
   });
@@ -63,15 +68,24 @@ export function createApp() {
     const ready = mongoose.connection.readyState === 1;
     res.status(ready ? 200 : 503).json({
       status: ready ? "ready" : "not-ready",
+      service: "jones-kicks",
       database: ready ? "connected" : "disconnected",
+      payments: env.paystackConfigured
+        ? `paystack-${env.paystackEnvironment}`
+        : "paystack-unconfigured",
+      email: env.smtpConfigured ? "smtp-configured" : "smtp-unconfigured",
+      timestamp: new Date().toISOString(),
     });
   });
 
-  app.get("/payment/callback", paymentCallback);
+  app.get(
+    "/payment/callback",
+    rateLimit({ windowMs: 60_000, max: 30, key: "payment-callback" }),
+    paymentCallback,
+  );
 
   const apiLimiter = rateLimit({ windowMs: 15 * 60_000, max: 250, key: "api" });
   app.use("/api", apiLimiter, (req, res, next) => {
-    res.setHeader("Cache-Control", "no-store");
     if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
     return verifyCsrf(req, res, next);
   });

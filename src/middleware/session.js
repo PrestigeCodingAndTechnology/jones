@@ -74,6 +74,15 @@ export async function sessionMiddleware(req, res, next) {
       res.clearCookie(ADMIN_COOKIE, cookieOptions());
       return next();
     }
+    const currentUserAgentHash = sha256(req.get("user-agent") || "");
+    if (
+      session.userAgentHash &&
+      session.userAgentHash !== currentUserAgentHash
+    ) {
+      await session.deleteOne();
+      res.clearCookie(ADMIN_COOKIE, cookieOptions());
+      return next();
+    }
 
     req.adminSession = session;
     req.admin = session.admin;

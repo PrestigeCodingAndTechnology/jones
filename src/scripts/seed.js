@@ -4,6 +4,7 @@ import { Admin } from "../models/Admin.js";
 import { Product, slugifyProduct } from "../models/Product.js";
 import { StoreSettings } from "../models/StoreSettings.js";
 import { hashPassword } from "../utils/crypto.js";
+import { migrateLegacyProductInventory } from "../services/inventoryMigration.js";
 
 const catalogue = [
   ["PUMA", "Lifestyle", 48_000, 58_000, "New", "pics1.jpeg", 3_000],
@@ -87,8 +88,7 @@ async function seed() {
     await Product.findOneAndUpdate(
       { slug },
       {
-        $setOnInsert: {
-          slug,
+        $set: {
           name,
           category,
           price,
@@ -97,9 +97,16 @@ async function seed() {
           tag,
           image: `/assets/images/${filename}`,
           fallbackImage: "/assets/images/pics4.jpeg",
-          sizes: [40, 41, 42, 43, 44, 45],
           description,
           active: true,
+        },
+        $setOnInsert: {
+          slug,
+          sizeInventory: [40, 41, 42, 43, 44, 45].map((size) => ({
+            size,
+            stock: 2,
+          })),
+          sizes: [40, 41, 42, 43, 44, 45],
           stock: 12,
           featured: catalogue.findIndex((item) => item[0] === name) < 8,
           views: 0,
@@ -109,23 +116,24 @@ async function seed() {
     );
   }
 
-  if (
-    process.env.NODE_ENV === "production" &&
-    (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD)
-  ) {
-    throw new Error("ADMIN_EMAIL and ADMIN_PASSWORD are required in production.");
-  }
+  await migrateLegacyProductInventory();
+
   const adminEmail = String(
     process.env.ADMIN_EMAIL || "admin@joneskick.com",
   ).toLowerCase();
   const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
   if (
     process.env.NODE_ENV === "production" &&
-    (adminPassword.length < 12 ||
-      ["admin123", "change-this-before-production"].includes(adminPassword))
+    (
+      !process.env.ADMIN_PASSWORD ||
+      adminPassword.length < 12 ||
+      /admin123|password|change[-_ ]?this|replace|example|placeholder/i.test(
+        adminPassword,
+      )
+    )
   ) {
     throw new Error(
-      "ADMIN_PASSWORD must contain at least 12 characters in production.",
+      "Set ADMIN_PASSWORD to an explicit, unique value of at least 12 characters before production seeding.",
     );
   }
   const existingAdmin = await Admin.findOne({ email: adminEmail });
@@ -145,11 +153,6 @@ async function seed() {
         key: "primary",
         storeName: "Jones Kicks",
         phone: "0905 857 9374",
-        whatsappUrl: "https://wa.me/message/6BIGK72XFX23L1",
-        instagramUrl: "https://www.instagram.com/teejonesonly",
-        instagramHandle: "@teejonesonly",
-        tiktokUrl: "https://www.tiktok.com/@tee_jones247",
-        tiktokHandle: "@tee_jones247",
         notificationEmail: process.env.ORDER_NOTIFICATION_EMAIL || "",
         orderAlerts: true,
         viewTracking: true,

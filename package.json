@@ -1,17 +1,20 @@
 {
   "name": "jones-kicks-ecommerce",
-  "version": "3.0.0",
+  "version": "6.0.0",
   "private": true,
   "description": "Jones Kicks premium ecommerce storefront and administration backend",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "start:seeded": "node src/scripts/seed.js && node server.js",
     "dev": "node --watch server.js",
     "seed": "node src/scripts/seed.js",
+    "migrate:inventory": "node src/scripts/migrateInventory.js",
     "test": "node --test",
     "check": "node scripts/check-project.js",
+    "test:core": "node --test test/crypto.test.js test/env.test.js test/http-utils.test.js test/inventory.test.js test/inventory-commit.test.js test/order-service.test.js test/order-workflow.test.js test/paystack.test.js",
+    "verify:paystack": "node scripts/check-paystack.js",
+    "verify:email": "node scripts/check-email.js",
     "verify": "npm run check && npm test && npm audit --omit=dev"
   },
   "engines": {

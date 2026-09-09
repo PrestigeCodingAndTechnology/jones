@@ -1,129 +1,190 @@
-# Jones Kicks Premium Ecommerce
+# Jones Kicks — Production Ecommerce
 
-A complete Jones Kicks ecommerce application built with Node.js, Express, EJS, MongoDB/Mongoose and ES6 JavaScript. The storefront remains a pure HTML/CSS/JavaScript experience; React is not used.
+Jones Kicks is a complete sneaker ecommerce application built with Node.js, Express, EJS, MongoDB/Mongoose and browser-native JavaScript. React is not used. The live storefront is rendered by EJS and backed by the API modules under `src/`; `index.html` is only a non-transactional design preview.
 
-## Included
+## Customer features
 
-### Customer storefront
+- Responsive premium storefront with hero slider, catalogue, search, category filters, sorting, quick view and product pages.
+- Per-product EU sizes 40–45 with live stock per size. Sold-out sizes remain visible but disabled, while sizes the administrator removes are hidden.
+- Wishlist/favourites and persistent shopping bag.
+- Server-authoritative pricing. The browser cannot choose product prices, delivery fees, discounts or final totals.
+- Custom delivery fee per product, editable from the administrator product form and charged per pair.
+- Percentage/fixed promo codes with minimum spend, maximum discount, date windows and usage limits.
+- Checkout for name, email, phone, delivery address, city/state and delivery note.
+- Paystack-only online payment flow. There is no simulated-success or demo-payment endpoint.
+- Customer payment confirmation only after Paystack server verification.
+- Order receipt/status history and private post-checkout order access token.
+- Order tracking using reference + checkout email + phone number.
+- Contact enquiry and WhatsApp/drop-list subscription forms.
+- Customer confirmation/status emails when SMTP is configured.
+- Privacy-preserving visitor/page analytics.
 
-- Premium responsive homepage and hero slider
-- Full 20-item Jones Kicks sneaker catalogue
-- Search, category filters and price sorting
-- Product details and quick view
-- EU sizes 40–45
-- Wishlist and persistent shopping bag
-- Contact, delivery-address and delivery-note collection
-- Per-product delivery fees shown in the product, bag and checkout
-- Working promotion codes with minimum spend, scheduling and usage limits
-- Server-authoritative product, delivery and total calculations
-- Paystack checkout initialization, callback verification and signed webhook handling
-- Order confirmation and customer email support
-- Working contact-enquiry submission
-- Private post-payment order lookup without exposing customer details publicly
+## Administrator features
 
-### Secure administrator backend
+- Database-backed administrator account with salted `scrypt` password hashing.
+- Signed, HTTP-only, secure-in-production sessions and CSRF protection.
+- Login/API rate limiting, CSP/security headers and request-ID handling.
+- Dashboard metrics for products, orders, paid revenue, visitors, low stock, messages, subscribers and promotions.
+- Product create/edit/soft-delete, featured flag, prices, description, image and per-product delivery-fee management.
+- Size-inventory editor for independently adding/removing EU sizes 40–45 and setting the stock quantity for each size. Total product stock is server-derived.
+- Signature-validated JPG/PNG/WebP image uploads.
+- Order centre with customer/delivery details, line items, discounts, payment/refund state and status history.
+- Fulfilment workflow with unpaid-order guards, cancellation controls and inventory restoration.
+- Paystack full-refund initiation for cancelled paid orders plus refund webhook lifecycle tracking.
+- Promotion management, contact-message inbox and subscriber management.
+- Sales/traffic analytics and store/notification settings.
+- Administrator password change.
 
-- Database-backed administrator account and session management
-- Salted `scrypt` password hashing
-- Signed, secure, HTTP-only cookies and CSRF protection
-- Login and API rate limiting
-- Catalogue creation, editing, soft deletion and stock management
-- Product image URL or validated JPG/PNG/WebP upload
-- A customizable delivery fee for every product
-- Real order centre with customer and delivery details
-- Fulfilment status updates, customer status emails and status history
-- Automatic stock reservation, rollback and paid-order cancellation restocking
-- Paid-order revenue dashboard
-- Privacy-preserving visitor, page, referrer and product-view analytics
-- Promotion, customer-inbox and WhatsApp-subscriber management
-- Store contact/social settings and administrator password changes
-- SMTP owner/customer notifications with visible delivery status and retry
-- Readiness/liveness probes, Docker image and one-command local stack
+## Live Paystack architecture
+
+The production payment path is intentionally **Paystack only**.
+
+1. The browser submits the cart/customer details to Jones Kicks.
+2. The server reloads product data from MongoDB and calculates the authoritative amount, delivery fees and promotion discount.
+3. The server initializes the transaction with Paystack using `PAYSTACK_SECRET_KEY` and stores the returned access code/reference.
+4. The customer is sent to the secure Paystack checkout URL.
+5. Paystack callback and signed webhook paths re-query Paystack before an order can become paid.
+6. Verification requires successful status, exact reference, exact NGN amount, matching customer email and the correct Paystack environment (`live` in production).
+7. Inventory/fulfilment and order emails run only after verified finalization.
+
+Both `PAYSTACK_PUBLIC_KEY` and `PAYSTACK_SECRET_KEY` must be configured as a matching pair. Production startup accepts only `pk_live_...` and `sk_live_...` credentials. The public key is safe to expose as frontend configuration; the secret key is never returned to browser code or committed to the repository.
+
+### Production payment fail-safes
+
+Production startup refuses to run when any of these are true:
+
+- Paystack public or secret key is missing.
+- A test key is used in production.
+- Public/secret keys are from different environments.
+- A placeholder-looking key is used.
+- `APP_URL` is not a real HTTPS public URL.
+- `PAYSTACK_CALLBACK_URL` is not the `/payment/callback` route on `APP_URL`.
+- `SESSION_SECRET` is weak/default/placeholder-like.
+- MongoDB or SMTP owner-notification configuration is missing.
+
+`npm run verify:paystack` authenticates the configured **live secret key** against Paystack without creating a charge. A controlled real payment should still be completed after deployment to validate the final domain, callback, webhook, Paystack account/channel configuration and settlement path.
 
 ## Requirements
 
-- Node.js 20.19 or newer
-- MongoDB 7 or newer, locally or through MongoDB Atlas
-- Paystack secret key for live payments
-- SMTP account for email delivery
+- Node.js 20.19 or newer.
+- MongoDB 7+ or MongoDB Atlas.
+- A Paystack account with live API keys for production.
+- SMTP credentials and an owner notification email (required in production).
+- HTTPS for the production domain.
 
-## Installation
+## Local development
 
 ```bash
-npm install
+npm ci
 cp .env.example .env
+# Edit .env and configure MongoDB. Use a Paystack TEST key pair for local payment QA.
+npm run seed
+npm run verify
+npm start
 ```
 
-Edit `.env`, especially:
+Open:
 
-- `MONGODB_URI`
-- `SESSION_SECRET` (at least 32 random characters in production)
-- `ADMIN_EMAIL` and `ADMIN_PASSWORD`
-- `APP_URL`
-- `PAYMENT_MODE` and `PAYSTACK_SECRET_KEY`
-- SMTP settings and `ORDER_NOTIFICATION_EMAIL`
-
-Create the initial catalogue and administrator, then start the server, with one command:
-
-```bash
-npm run start:seeded
+```text
+Store: http://localhost:5000
+Admin: http://localhost:5000/admin
 ```
 
-The seed is idempotent: running it again adds missing starter records without overwriting catalogue changes made in the admin dashboard. After initial setup, `npm start` starts only the server.
-
-Open `http://localhost:5000` and use `#/admin` for the administration area.
-
-### Start everything with Docker
-
-Docker Compose starts MongoDB, creates the initial catalogue and administrator, and starts the web application:
+For auto-reload:
 
 ```bash
+npm run dev
+```
+
+Or start the application and MongoDB together with Docker:
+
+```bash
+cp .env.example .env
+# Edit .env first, then:
+docker compose run --rm app npm run seed
 docker compose up --build
 ```
 
-Then open `http://localhost:5000`. To choose a different local administrator password:
+If Paystack keys are blank, the catalogue still loads but checkout remains disabled. There is no fake-payment fallback.
 
-```bash
-ADMIN_PASSWORD='your-password' docker compose up --build
+## Production environment
+
+Do not commit the real `.env`. Configure secrets in your hosting platform or a private server `.env` file.
+
+```env
+NODE_ENV=production
+PORT=5000
+APP_URL=https://your-domain.example
+MONGODB_URI=mongodb+srv://USER:PASSWORD@CLUSTER/jones_kicks
+SESSION_SECRET=YOUR_RANDOM_64_PLUS_CHARACTER_SECRET
+SESSION_TTL_HOURS=24
+TRUST_PROXY=1
+
+ADMIN_NAME=Jones Kicks Admin
+ADMIN_EMAIL=owner@your-domain.example
+ADMIN_PASSWORD=YOUR_UNIQUE_STRONG_ADMIN_PASSWORD
+
+PAYSTACK_PUBLIC_KEY=pk_live_YOUR_REAL_PUBLIC_KEY
+PAYSTACK_SECRET_KEY=sk_live_YOUR_REAL_SECRET_KEY
+PAYSTACK_CALLBACK_URL=https://your-domain.example/payment/callback
+
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-smtp-user
+SMTP_PASS=your-smtp-password
+SMTP_FROM="Jones Kicks <orders@your-domain.example>"
+ORDER_NOTIFICATION_EMAIL=orders@your-domain.example
 ```
 
-## Payments
+Set the Paystack dashboard webhook to:
 
-Local development defaults to `PAYMENT_MODE=demo`. It exercises order creation, server-side totals, inventory updates and email handling without charging money.
+```text
+https://your-domain.example/api/payments/webhook
+```
 
-For real payments:
-
-1. Set `PAYMENT_MODE=paystack`.
-2. Add `PAYSTACK_SECRET_KEY`.
-3. Set `APP_URL` and `PAYSTACK_CALLBACK_URL` to the public HTTPS domain.
-4. Add this webhook URL in the Paystack dashboard:
-
-   `https://your-domain.example/api/payments/webhook`
-
-The server initializes transactions privately, verifies the status and amount before marking an order paid, and validates the webhook's HMAC-SHA512 signature.
-
-Paid-order confirmation also commits inventory atomically per product. If stock changed between checkout and payment, the order is marked **Needs review** instead of overselling. An administrator can restock and confirm it, or cancel it. Cancelling a committed paid order returns its stock; any monetary refund is processed separately in Paystack.
-
-## Product delivery fees
-
-Every product has its own `deliveryFee`. The administrator enters or changes it in the add/edit sneaker form. The customer UI shows the fee per pair, and both the browser and server calculate:
-
-`total delivery = sum(product delivery fee × quantity)`
-
-The server ignores prices and delivery fees supplied by the browser and recalculates the final amount from MongoDB before creating an order.
-
-## Image storage
-
-Uploaded images are validated and saved under `public/uploads`. This is suitable for a persistent VPS disk. For an ephemeral hosting platform, mount a persistent disk or replace the upload service with Cloudinary/S3-compatible object storage.
-
-## Verification
+## First production start
 
 ```bash
+npm ci
 npm run verify
+npm run verify:paystack
+npm run verify:email
+npm run seed
+npm start
 ```
+
+When dependencies are installed, also run the full smoke suite:
+
+```bash
+npm test
+```
+
+## Available verification commands
+
+```bash
+npm run check             # required files + critical feature wiring
+npm run test:core         # behavioral tests, including Paystack verification rules
+npm test                  # core tests + Express/EJS smoke test
+npm run verify:paystack   # live Paystack authentication check; creates no charge
+npm run verify:email      # SMTP authentication check; sends no email
+npm run migrate:inventory # migrate an older catalogue to stock per size
+npm run verify            # project check + all tests + production dependency audit
+```
+
+## Product images
+
+Admin uploads are stored in `public/uploads`. Use persistent disk storage on the production server/container and back this directory up. On an ephemeral platform, mount persistent storage or replace the upload service with object storage before relying on admin uploads.
+
+## Health endpoints
+
+```text
+GET /health
+GET /ready
+```
+
+`/ready` returns HTTP 200 only when MongoDB is connected. Health output also reports whether Paystack is configured as `paystack-live`, `paystack-test` or unconfigured; it never exposes a key.
 
 ## Deployment
 
-GitHub Pages can display only the static preview in `index.html`; it cannot run Node.js or MongoDB. Deploy the complete application to a Node-capable service or VPS, configure MongoDB and environment variables, then point the production domain to that server.
-
-See [DEPLOYMENT.md](DEPLOYMENT.md) for the production environment, Docker command, persistent-upload requirement, Paystack webhook and release checklist.
+See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the complete VPS/Nginx, Docker, Paystack, SMTP and launch checklist.

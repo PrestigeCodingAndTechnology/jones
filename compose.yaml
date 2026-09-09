@@ -19,17 +19,27 @@ services:
       mongo:
         condition: service_healthy
     environment:
-      NODE_ENV: development
+      NODE_ENV: ${NODE_ENV:-development}
       PORT: 5000
-      APP_URL: http://localhost:5000
+      APP_URL: ${APP_URL:-http://localhost:5000}
       MONGODB_URI: mongodb://mongo:27017/jones_kicks
-      MONGODB_TRANSACTIONS: "false"
-      SESSION_SECRET: local-docker-session-secret-change-before-hosting
-      ADMIN_NAME: Jones Kicks Admin
+      SESSION_SECRET: ${SESSION_SECRET:-development-only-change-this-session-secret}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-24}
+      ADMIN_NAME: ${ADMIN_NAME:-Jones Kicks Admin}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@joneskick.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
-      PAYMENT_MODE: demo
-      TRUST_PROXY: 0
+      PAYSTACK_PUBLIC_KEY: ${PAYSTACK_PUBLIC_KEY:-}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+      PAYSTACK_CALLBACK_URL: ${PAYSTACK_CALLBACK_URL:-http://localhost:5000/payment/callback}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-Jones Kicks <orders@joneskick.com>}
+      ORDER_NOTIFICATION_EMAIL: ${ORDER_NOTIFICATION_EMAIL:-}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-1572864}
     ports:
       - "5000:5000"
     volumes:

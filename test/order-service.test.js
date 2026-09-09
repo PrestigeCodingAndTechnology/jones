@@ -1,9 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  calculateQuote,
-  inventoryRequirements,
-} from "../src/services/orderService.js";
+import { calculateQuote, applyCouponToQuote } from "../src/services/quote.js";
 
 const products = [
   {
@@ -14,7 +11,15 @@ const products = [
     price: 50_000,
     deliveryFee: 3_500,
     sizes: [40, 41, 42, 43, 44, 45],
-    stock: 6,
+    sizeInventory: [
+      { size: 40, stock: 3 },
+      { size: 41, stock: 0 },
+      { size: 42, stock: 4 },
+      { size: 43, stock: 2 },
+      { size: 44, stock: 1 },
+      { size: 45, stock: 2 },
+    ],
+    stock: 12,
     active: true,
   },
   {
@@ -25,7 +30,15 @@ const products = [
     price: 70_000,
     deliveryFee: 5_000,
     sizes: [40, 41, 42, 43, 44, 45],
-    stock: 3,
+    sizeInventory: [
+      { size: 40, stock: 1 },
+      { size: 41, stock: 1 },
+      { size: 42, stock: 1 },
+      { size: 43, stock: 3 },
+      { size: 44, stock: 3 },
+      { size: 45, stock: 0 },
+    ],
+    stock: 9,
     active: true,
   },
 ];
@@ -65,34 +78,73 @@ test("rejects a cart quantity that exceeds real inventory", () => {
         [{ productId: String(products[1]._id), size: 43, qty: 4 }],
         products,
       ),
-    /Only 3 Second Pair pair\(s\) remain/,
+    /Only 3 Second Pair pair\(s\) remain in size 43/,
   );
 });
 
-test("checks shared product stock across different selected sizes", () => {
+test("rejects a sold-out size even when another size has stock", () => {
   assert.throws(
     () =>
       calculateQuote(
-        [
-          { productId: String(products[1]._id), size: 42, qty: 2 },
-          { productId: String(products[1]._id), size: 44, qty: 2 },
-        ],
+        [{ productId: String(products[0]._id), size: 41, qty: 1 }],
         products,
       ),
-    /across your selected sizes/,
+    /sold out in size 41/,
   );
 });
 
-test("groups inventory changes by product before stock is committed", () => {
-  assert.deepEqual(
-    inventoryRequirements([
-      { product: products[0]._id, quantity: 2 },
-      { product: products[0]._id, quantity: 1 },
-      { product: products[1]._id, quantity: 2 },
-    ]),
-    [
-      { product: String(products[0]._id), quantity: 3 },
-      { product: String(products[1]._id), quantity: 2 },
-    ],
+
+test("applies percentage promotions only to product subtotal", () => {
+  const quote = calculateQuote(
+    [{ productId: String(products[0]._id), size: 42, qty: 2 }],
+    products,
+  );
+  const discounted = applyCouponToQuote(quote, {
+    _id: "507f1f77bcf86cd799439099",
+    code: "SAVE10",
+    type: "percentage",
+    value: 10,
+    minSubtotal: 0,
+    maxDiscount: 0,
+    usageLimit: 0,
+    usedCount: 0,
+    active: true,
+  });
+  assert.equal(discounted.discount, 10_000);
+  assert.equal(discounted.deliveryFee, 7_000);
+  assert.equal(discounted.total, 97_000);
+  assert.equal(discounted.promotion.code, "SAVE10");
+});
+
+test("honours fixed-promo caps and minimum spend", () => {
+  const quote = calculateQuote(
+    [{ productId: String(products[1]._id), size: 44, qty: 1 }],
+    products,
+  );
+  const discounted = applyCouponToQuote(quote, {
+    code: "DROP",
+    type: "fixed",
+    value: 20_000,
+    minSubtotal: 50_000,
+    maxDiscount: 12_000,
+    usageLimit: 10,
+    usedCount: 2,
+    active: true,
+  });
+  assert.equal(discounted.discount, 12_000);
+  assert.equal(discounted.total, 63_000);
+
+  assert.throws(
+    () => applyCouponToQuote({ ...quote, subtotal: 40_000 }, {
+      code: "MINIMUM",
+      type: "fixed",
+      value: 5_000,
+      minSubtotal: 50_000,
+      maxDiscount: 0,
+      usageLimit: 0,
+      usedCount: 0,
+      active: true,
+    }),
+    /requires at least/,
   );
 });

@@ -8,73 +8,134 @@ const asBoolean = (value, fallback = false) => {
   return String(value).toLowerCase() === "true" || value === "1";
 };
 
-const nodeEnv = process.env.NODE_ENV || "development";
-const defaultSessionSecret = "development-only-change-this-session-secret";
-const sessionSecret = process.env.SESSION_SECRET || defaultSessionSecret;
-const paymentMode =
-  process.env.PAYMENT_MODE === "paystack" ? "paystack" : "demo";
+const cleanUrl = (value, fallback) => {
+  const raw = String(value || fallback || "").trim().replace(/\/$/, "");
+  try {
+    return new URL(raw).toString().replace(/\/$/, "");
+  } catch {
+    throw new Error(`Invalid URL configuration: ${raw || "(empty)"}`);
+  }
+};
 
-if (
-  nodeEnv === "production" &&
-  (sessionSecret.length < 32 || sessionSecret === defaultSessionSecret)
-) {
+const keyEnvironment = (key, type) => {
+  const value = String(key || "").trim();
+  if (!value) return "";
+  if (/replace|example|placeholder|x{5,}/i.test(value)) return "invalid";
+  const pattern = new RegExp(`^${type}_(live|test)_[A-Za-z0-9]+$`);
+  const match = pattern.exec(value);
+  return match ? match[1] : "invalid";
+};
+
+const nodeEnv = process.env.NODE_ENV || "development";
+const isProduction = nodeEnv === "production";
+const isTest = nodeEnv === "test";
+const sessionSecret =
+  process.env.SESSION_SECRET || "development-only-change-this-session-secret";
+const appUrl = cleanUrl(process.env.APP_URL, "http://localhost:5000");
+const paystackPublicKey = String(process.env.PAYSTACK_PUBLIC_KEY || "").trim();
+const paystackSecretKey = String(process.env.PAYSTACK_SECRET_KEY || "").trim();
+const publicKeyEnvironment = keyEnvironment(paystackPublicKey, "pk");
+const secretKeyEnvironment = keyEnvironment(paystackSecretKey, "sk");
+const paystackConfigured = Boolean(paystackPublicKey && paystackSecretKey);
+const paystackEnvironment = paystackConfigured ? publicKeyEnvironment : "unconfigured";
+const paystackCallbackUrl = cleanUrl(
+  process.env.PAYSTACK_CALLBACK_URL,
+  `${appUrl}/payment/callback`,
+);
+
+if (Boolean(paystackPublicKey) !== Boolean(paystackSecretKey)) {
   throw new Error(
-    "SESSION_SECRET must contain at least 32 characters in production.",
+    "PAYSTACK_PUBLIC_KEY and PAYSTACK_SECRET_KEY must be configured together.",
   );
 }
-if (nodeEnv === "production" && paymentMode !== "paystack") {
-  throw new Error("PAYMENT_MODE must be paystack in production.");
+
+if (paystackConfigured) {
+  if (publicKeyEnvironment === "invalid") {
+    throw new Error("PAYSTACK_PUBLIC_KEY must be a valid pk_test_ or pk_live_ key.");
+  }
+  if (secretKeyEnvironment === "invalid") {
+    throw new Error("PAYSTACK_SECRET_KEY must be a valid sk_test_ or sk_live_ key.");
+  }
+  if (publicKeyEnvironment !== secretKeyEnvironment) {
+    throw new Error("Paystack public and secret keys must belong to the same environment.");
+  }
 }
-if (nodeEnv === "production" && !process.env.PAYSTACK_SECRET_KEY) {
-  throw new Error("PAYSTACK_SECRET_KEY is required in production.");
-}
-if (nodeEnv === "production") {
-  for (const name of [
+
+if (isProduction) {
+  const requiredProductionValues = [
+    "MONGODB_URI",
     "SMTP_HOST",
     "SMTP_USER",
     "SMTP_PASS",
     "ORDER_NOTIFICATION_EMAIL",
-  ]) {
-    if (!process.env[name]) throw new Error(`${name} is required in production.`);
+  ];
+  const missingProductionValue = requiredProductionValues.find(
+    (name) => !String(process.env[name] || "").trim(),
+  );
+  if (missingProductionValue) {
+    throw new Error(`${missingProductionValue} is required in production.`);
   }
-  for (const [name, value] of [
-    ["APP_URL", process.env.APP_URL],
-    ["PAYSTACK_CALLBACK_URL", process.env.PAYSTACK_CALLBACK_URL],
-  ]) {
-    let url;
-    try {
-      url = new URL(String(value || ""));
-    } catch {
-      throw new Error(`${name} must be a public HTTPS URL in production.`);
-    }
-    if (url.protocol !== "https:" || !url.hostname) {
-      throw new Error(`${name} must be a public HTTPS URL in production.`);
-    }
+  if (
+    !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(
+      String(process.env.ORDER_NOTIFICATION_EMAIL || ""),
+    )
+  ) {
+    throw new Error("ORDER_NOTIFICATION_EMAIL must be a valid email address.");
+  }
+  if (
+    sessionSecret.length < 32 ||
+    sessionSecret === "development-only-change-this-session-secret" ||
+    /replace|change[-_ ]?this|example|placeholder/i.test(sessionSecret)
+  ) {
+    throw new Error(
+      "SESSION_SECRET must be a unique random value of at least 32 characters in production.",
+    );
+  }
+  if (!paystackConfigured) {
+    throw new Error(
+      "Both PAYSTACK_PUBLIC_KEY and PAYSTACK_SECRET_KEY are required in production.",
+    );
+  }
+  if (paystackEnvironment !== "live" || secretKeyEnvironment !== "live") {
+    throw new Error(
+      "Production requires genuine Paystack live keys (pk_live_... and sk_live_...).",
+    );
+  }
+  if (!appUrl.startsWith("https://")) {
+    throw new Error("APP_URL must use HTTPS in production.");
+  }
+  if (/^https:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(appUrl)) {
+    throw new Error("APP_URL must be the real public production domain.");
+  }
+  if (!paystackCallbackUrl.startsWith("https://")) {
+    throw new Error("PAYSTACK_CALLBACK_URL must use HTTPS in production.");
+  }
+  const appOrigin = new URL(appUrl).origin;
+  const callback = new URL(paystackCallbackUrl);
+  if (callback.origin !== appOrigin || callback.pathname !== "/payment/callback") {
+    throw new Error(
+      "PAYSTACK_CALLBACK_URL must be the /payment/callback route on APP_URL.",
+    );
   }
 }
 
 export const env = Object.freeze({
   nodeEnv,
-  isProduction: nodeEnv === "production",
-  isTest: nodeEnv === "test",
+  isProduction,
+  isTest,
   port: asNumber(process.env.PORT, 5000),
-  appUrl: (process.env.APP_URL || "http://localhost:5000").replace(/\/$/, ""),
+  appUrl,
   mongodbUri:
     process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/jones_kicks",
-  mongodbTransactions: asBoolean(
-    process.env.MONGODB_TRANSACTIONS,
-    nodeEnv === "production",
-  ),
   sessionSecret,
   sessionTtlHours: asNumber(process.env.SESSION_TTL_HOURS, 24),
-  orderAccessTtlHours: asNumber(process.env.ORDER_ACCESS_TTL_HOURS, 720),
   trustProxy: asNumber(process.env.TRUST_PROXY, 0),
   maxUploadBytes: asNumber(process.env.MAX_UPLOAD_BYTES, 1_572_864),
-  paymentMode,
-  paystackSecretKey: process.env.PAYSTACK_SECRET_KEY || "",
-  paystackCallbackUrl:
-    process.env.PAYSTACK_CALLBACK_URL ||
-    `${(process.env.APP_URL || "http://localhost:5000").replace(/\/$/, "")}/payment/callback`,
+  paystackConfigured,
+  paystackEnvironment,
+  paystackPublicKey,
+  paystackSecretKey,
+  paystackCallbackUrl,
   smtp: {
     host: process.env.SMTP_HOST || "",
     port: asNumber(process.env.SMTP_PORT, 587),
@@ -84,4 +145,7 @@ export const env = Object.freeze({
     from: process.env.SMTP_FROM || "Jones Kicks <orders@joneskick.com>",
     orderNotificationEmail: process.env.ORDER_NOTIFICATION_EMAIL || "",
   },
+  smtpConfigured: Boolean(
+    process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS,
+  ),
 });

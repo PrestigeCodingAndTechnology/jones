@@ -3,11 +3,18 @@ import { createServer } from "node:http";
 import { createApp } from "./src/app.js";
 import { connectDatabase, disconnectDatabase } from "./src/config/database.js";
 import { env } from "./src/config/env.js";
+import { migrateLegacyProductInventory } from "./src/services/inventoryMigration.js";
 
 let server;
 
 async function start() {
   await connectDatabase();
+  const migratedProducts = await migrateLegacyProductInventory();
+  if (migratedProducts) {
+    console.log(
+      `Migrated ${migratedProducts} legacy product(s) to per-size inventory.`,
+    );
+  }
   const app = createApp();
   server = createServer(app);
 
@@ -27,9 +34,6 @@ async function shutdown(signal) {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("unhandledRejection", (error) => {
-  console.error("Unhandled promise rejection:", error);
-});
 
 start().catch((error) => {
   console.error("Unable to start Jones Kicks:", error);

@@ -10,25 +10,24 @@ import { env } from "../config/env.js";
 import { sha256 } from "../utils/crypto.js";
 import {
   asyncHandler,
+  cleanEmail,
   cleanText,
   HttpError,
   publicOrder,
   publicProduct,
+  normalizePhoneForMatch,
 } from "../utils/http.js";
 import {
-  createDemoPaymentToken,
   createOrderAccessToken,
   createPendingOrder,
-  finalizePaidOrder,
   quoteCart,
-  verifyDemoPaymentToken,
   verifyOrderAccessToken,
 } from "../services/orderService.js";
-import { initializePaystackTransaction } from "../services/paystack.js";
 import {
-  recordNotificationResult,
-  sendOrderNotifications,
-} from "../services/email.js";
+  assertPaystackConfigured,
+  initializePaystackTransaction,
+} from "../services/paystack.js";
+import { sendContactNotification } from "../services/email.js";
 
 export const publicRouter = Router();
 
@@ -50,15 +49,12 @@ publicRouter.get(
             email: req.admin.email,
           }
         : null,
-      paymentMode: env.paymentMode,
+      paymentConfigured: env.paystackConfigured,
+      paymentEnvironment: env.paystackEnvironment,
+      paystackPublicKey: env.paystackConfigured ? env.paystackPublicKey : "",
       settings: {
         storeName: settings.storeName,
         phone: settings.phone,
-        whatsappUrl: settings.whatsappUrl,
-        instagramUrl: settings.instagramUrl,
-        instagramHandle: settings.instagramHandle,
-        tiktokUrl: settings.tiktokUrl,
-        tiktokHandle: settings.tiktokHandle,
         notificationEmail: req.admin ? settings.notificationEmail : "",
         orderAlerts: req.admin ? settings.orderAlerts : undefined,
         viewTracking: settings.viewTracking,
@@ -77,10 +73,11 @@ publicRouter.get(
         max: 80,
       });
     }
-    if (req.query.search)
+    if (req.query.search) {
       filter.$text = {
         $search: cleanText(req.query.search, { name: "Search", max: 100 }),
       };
+    }
     const sort =
       req.query.sort === "low"
         ? { price: 1 }
@@ -118,7 +115,7 @@ publicRouter.get(
 publicRouter.post(
   "/orders/quote",
   asyncHandler(async (req, res) => {
-    const quote = await quoteCart(req.body.items, req.body.promotionCode);
+    const quote = await quoteCart(req.body.items, req.body.promoCode);
     res.json({
       items: quote.items.map((item) => ({
         productId: String(item.product),
@@ -130,11 +127,11 @@ publicRouter.post(
         lineDeliveryFee: item.lineDeliveryFee,
       })),
       subtotal: quote.subtotal,
-      discount: quote.discount,
       deliveryFee: quote.deliveryFee,
+      discount: quote.discount || 0,
+      promoCode: quote.promotion?.code || "",
       total: quote.total,
       currency: quote.currency,
-      promotion: quote.promotion,
     });
   }),
 );
@@ -142,93 +139,83 @@ publicRouter.post(
 publicRouter.post(
   "/orders",
   asyncHandler(async (req, res) => {
+    assertPaystackConfigured();
     const order = await createPendingOrder({
       customer: req.body.customer,
       cartItems: req.body.items,
       paymentMethod: req.body.paymentMethod,
-      promotionCode: req.body.promotionCode,
+      promoCode: req.body.promoCode,
     });
     const orderToken = createOrderAccessToken(order);
 
-    if (env.paymentMode === "paystack") {
-      try {
-        const transaction = await initializePaystackTransaction(order);
-        order.payment.accessCode = transaction.access_code;
-        await order.save();
-        return res.status(201).json({
-          order: publicOrder(order),
-          orderToken,
-          payment: {
-            mode: "paystack",
-            authorizationUrl: transaction.authorization_url,
-            accessCode: transaction.access_code,
-          },
-        });
-      } catch (error) {
-        order.payment.status = "failed";
-        order.statusHistory.push({
-          status: "Payment initialization failed",
-          changedBy: "system",
-        });
-        await order.save();
-        throw error;
-      }
+    try {
+      const transaction = await initializePaystackTransaction(order);
+      order.payment.accessCode = transaction.access_code;
+      await order.save();
+      return res.status(201).json({
+        order: publicOrder(order),
+        orderToken,
+        payment: {
+          mode: "paystack",
+          environment: env.paystackEnvironment,
+          authorizationUrl: transaction.authorization_url,
+          accessCode: transaction.access_code,
+        },
+      });
+    } catch (error) {
+      order.payment.status = "failed";
+      order.payment.processingAt = undefined;
+      order.statusHistory.push({
+        status: "Payment initialization failed",
+        changedBy: "system",
+      });
+      await order.save().catch((saveError) => {
+        console.error("Unable to record failed payment initialization:", saveError);
+      });
+      throw error;
     }
-
-    res.status(201).json({
-      order: publicOrder(order),
-      orderToken,
-      payment: {
-        mode: "demo",
-        demoToken: createDemoPaymentToken(order),
-      },
-    });
-  }),
-);
-
-publicRouter.post(
-  "/orders/:reference/demo-pay",
-  asyncHandler(async (req, res) => {
-    if (env.paymentMode !== "demo" || env.isProduction) {
-      throw new HttpError(404, "Demo payment is unavailable.");
-    }
-    const order = await Order.findOne({
-      reference: req.params.reference,
-    }).select("+payment.providerResponse");
-    if (
-      !order ||
-      !verifyDemoPaymentToken(req.body.demoToken, order.payment.reference)
-    ) {
-      throw new HttpError(403, "The demo-payment request is invalid.");
-    }
-    const result = await finalizePaidOrder(order, {
-      channel: "demo",
-      paid_at: new Date().toISOString(),
-    });
-    if (!result.alreadyPaid) {
-      void recordNotificationResult(
-        result.order,
-        sendOrderNotifications(result.order),
-      );
-    }
-    res.json({
-      order: publicOrder(result.order),
-      orderToken: createOrderAccessToken(result.order),
-    });
   }),
 );
 
 publicRouter.get(
   "/orders/:reference",
   asyncHandler(async (req, res) => {
-    const orderToken = req.get("x-order-token") || req.query.token;
-    if (!verifyOrderAccessToken(orderToken, req.params.reference)) {
+    if (!verifyOrderAccessToken(req.query.token, req.params.reference)) {
       throw new HttpError(403, "The order link is invalid or incomplete.");
     }
-    const order = await Order.findOne({
-      reference: req.params.reference,
-    }).lean();
+    const order = await Order.findOne({ reference: req.params.reference }).lean();
     if (!order) throw new HttpError(404, "Order not found.");
+    res.json({ order: publicOrder(order) });
+  }),
+);
+
+publicRouter.post(
+  "/orders/lookup",
+  asyncHandler(async (req, res) => {
+    const reference = cleanText(req.body.reference, {
+      name: "Order reference",
+      min: 8,
+      max: 60,
+    }).toUpperCase();
+    const email = cleanEmail(req.body.email);
+    const phone = cleanText(req.body.phone, {
+      name: "Phone number",
+      min: 7,
+      max: 40,
+    });
+    const order = await Order.findOne({
+      reference,
+      "customer.email": email,
+    }).lean();
+    if (
+      !order ||
+      normalizePhoneForMatch(order.customer.phone) !== normalizePhoneForMatch(phone)
+    ) {
+      throw new HttpError(
+        404,
+        "We could not match an order with those details.",
+      );
+    }
     res.json({ order: publicOrder(order) });
   }),
 );
@@ -255,25 +242,16 @@ publicRouter.post(
     } catch {}
     const day = new Date().toISOString().slice(0, 10);
     const visitorHash = sha256(`${visitorId}:${env.sessionSecret}`);
-    const productIdentifier = path.match(/^\/product\/([^/?#]+)/)?.[1];
-    const productQuery = productIdentifier
-      ? mongoose.isValidObjectId(productIdentifier)
-        ? { _id: productIdentifier, active: true }
-        : { slug: productIdentifier, active: true }
-      : null;
-    await Promise.all([
-      VisitorDay.updateOne(
-        { day, visitorHash },
-        {
-          $inc: { pageViews: 1 },
-          $addToSet: { paths: path },
-          $set: { lastSeenAt: new Date() },
-          $setOnInsert: { firstSeenAt: new Date(), referrerHost },
-        },
-        { upsert: true },
-      ),
-      productQuery ? Product.updateOne(productQuery, { $inc: { views: 1 } }) : null,
-    ]);
+    await VisitorDay.updateOne(
+      { day, visitorHash },
+      {
+        $inc: { pageViews: 1 },
+        $addToSet: { paths: path },
+        $set: { lastSeenAt: new Date() },
+        $setOnInsert: { firstSeenAt: new Date(), referrerHost },
+      },
+      { upsert: true },
+    );
     res.status(204).end();
   }),
 );
@@ -294,12 +272,13 @@ publicRouter.post(
         max: 2_000,
       }),
     });
-    res
-      .status(201)
-      .json({
-        id: String(message._id),
-        message: "Your enquiry has been received.",
-      });
+    void sendContactNotification(message).catch((error) => {
+      console.error("Contact notification failed:", error);
+    });
+    res.status(201).json({
+      id: String(message._id),
+      message: "Your enquiry has been received.",
+    });
   }),
 );
 

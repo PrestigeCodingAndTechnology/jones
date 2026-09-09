@@ -22,6 +22,11 @@ export function errorHandler(error, req, res, _next) {
     status = 400;
     message = "The supplied record identifier is invalid.";
   }
+  if (error.name === "VersionError") {
+    status = 409;
+    message =
+      "This record changed while you were editing it. Reload the latest data and try again.";
+  }
 
   if (status >= 500) {
     console.error(`[${req.id || "no-request-id"}]`, error);

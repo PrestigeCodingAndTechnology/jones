@@ -34,7 +34,10 @@ export function securityHeaders(req, res, next) {
 }
 
 export function requestContext(req, res, next) {
-  req.id = req.get("x-request-id") || randomUUID();
+  const supplied = String(req.get("x-request-id") || "")
+    .slice(0, 128)
+    .replace(/[^A-Za-z0-9._:-]/g, "");
+  req.id = supplied || randomUUID();
   res.setHeader("X-Request-Id", req.id);
   next();
 }

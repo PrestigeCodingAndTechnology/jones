@@ -1,7 +1,7 @@
 (function clientApp() {
   "use strict";
   const K = {
-    products: "jk_products_v4",
+    products: "jk_products_v6",
     cart: "jk_cart_v2",
     orders: "jk_orders_v2",
     views: "jk_views_v2",
@@ -16,7 +16,9 @@
     ),
     csrfToken: "",
     adminAuthenticated: false,
-    paymentMode: "demo",
+    paymentConfigured: false,
+    paymentEnvironment: "unconfigured",
+    paystackPublicKey: "",
   };
   const imageRoot = runtime.api ? "/assets/images/" : "assets/images/";
   const fallback = [
@@ -98,11 +100,6 @@
   const defaults = {
     storeName: "Jones Kicks",
     phone: "0905 857 9374",
-    whatsappUrl: "https://wa.me/message/6BIGK72XFX23L1",
-    instagramUrl: "https://www.instagram.com/teejonesonly",
-    instagramHandle: "@teejonesonly",
-    tiktokUrl: "https://www.tiktok.com/@tee_jones247",
-    tiktokHandle: "@tee_jones247",
     notificationEmail: "",
     viewTracking: true,
     orderAlerts: true,
@@ -120,24 +117,25 @@
     size: null,
     adminTab: "dashboard",
     adminSearch: "",
+    orderSearch: "",
+    orderStatus: "",
+    orderPaymentStatus: "",
+    orderPage: 1,
+    orderPages: 1,
+    orderTotal: 0,
     upload: "",
-    pending: null,
+    paymentBusy: false,
     hero: 0,
     timer: null,
     dashboard: null,
     analytics: null,
-    quote: null,
-    promotions: [],
     messages: [],
     subscribers: [],
+    coupons: [],
+    promo: null,
+    quote: null,
+    trackedOrder: null,
     admin: null,
-    orderSearch: "",
-    orderStatus: "",
-    orderPage: 1,
-    orderPages: 1,
-    orderTotal: 0,
-    promoBusy: false,
-    checkoutBusy: false,
     adminLoading: false,
   };
   function read(key, f) {
@@ -183,18 +181,8 @@
       maximumFractionDigits: 0,
     }).format(Number(v || 0));
   }
-  function secureUrl(value, fallbackValue) {
-    try {
-      const parsed = new URL(String(value || ""));
-      return parsed.protocol === "https:" ? esc(parsed.href) : esc(fallbackValue);
-    } catch (_) {
-      return esc(fallbackValue);
-    }
-  }
   function phoneHref(value) {
-    let digits = String(value || "").replace(/\D/g, "");
-    if (digits.startsWith("0")) digits = "234" + digits.slice(1);
-    return "+" + digits;
+    return "tel:" + String(value || "").replace(/[^+\d]/g, "");
   }
   function day(off) {
     const d = new Date();
@@ -213,57 +201,149 @@
       return p.id === id;
     });
   }
+  function sizeInventoryFor(p) {
+    if (p && Array.isArray(p.sizeInventory) && p.sizeInventory.length) {
+      return p.sizeInventory
+        .map(function (entry) {
+          return {
+            size: Number(entry.size),
+            stock: Math.max(0, Math.floor(Number(entry.stock || 0))),
+          };
+        })
+        .filter(function (entry, index, entries) {
+          return (
+            Number.isInteger(entry.size) &&
+            entry.size >= 40 &&
+            entry.size <= 45 &&
+            entries.findIndex(function (candidate) {
+              return candidate.size === entry.size;
+            }) === index
+          );
+        })
+        .sort(function (a, b) {
+          return a.size - b.size;
+        });
+    }
+    const sizes = Array.isArray(p && p.sizes) && p.sizes.length
+        ? p.sizes.map(Number).filter(function (size) {
+            return Number.isInteger(size) && size >= 40 && size <= 45;
+          })
+        : [40, 41, 42, 43, 44, 45],
+      total = Math.max(0, Math.floor(Number((p && p.stock) || 0))),
+      base = sizes.length ? Math.floor(total / sizes.length) : 0,
+      remainder = sizes.length ? total % sizes.length : 0;
+    return sizes.map(function (size, index) {
+      return { size: size, stock: base + (index < remainder ? 1 : 0) };
+    });
+  }
+  function stockForSize(p, size) {
+    const entry = sizeInventoryFor(p).find(function (candidate) {
+      return candidate.size === Number(size);
+    });
+    return entry ? entry.stock : 0;
+  }
+  function sizeButtons(p) {
+    return sizeInventoryFor(p)
+      .map(function (entry) {
+        const soldOut = entry.stock < 1;
+        return (
+          '<button class="size-btn ' +
+          (soldOut ? "sold-out" : "") +
+          '" data-size="' +
+          entry.size +
+          '" type="button" ' +
+          (soldOut
+            ? 'disabled aria-disabled="true" title="Size ' +
+              entry.size +
+              ' is sold out"'
+            : 'aria-label="Select EU size ' + entry.size + '"') +
+          "><span>" +
+          entry.size +
+          "</span>" +
+          (soldOut ? "<small>Sold out</small>" : "") +
+          "</button>"
+        );
+      })
+      .join("");
+  }
+  function sizeStockSummary(p) {
+    return sizeInventoryFor(p)
+      .map(function (entry) {
+        return "EU " + entry.size + ": " + entry.stock;
+      })
+      .join(" • ");
+  }
+  function sizeStockBadges(p) {
+    return sizeInventoryFor(p)
+      .map(function (entry) {
+        return (
+          '<span class="size-stock-badge ' +
+          (entry.stock < 1 ? "sold-out" : "") +
+          '">' +
+          entry.size +
+          " × " +
+          entry.stock +
+          "</span>"
+        );
+      })
+      .join("");
+  }
+  function sizeStockBadges(p) {
+    return sizeInventoryFor(p)
+      .map(function (entry) {
+        return (
+          '<span class="size-stock-badge ' +
+          (entry.stock < 1 ? "sold-out" : "") +
+          '">EU ' +
+          entry.size +
+          " · " +
+          entry.stock +
+          "</span>"
+        );
+      })
+      .join("");
+  }
   function count() {
     return state.cart.reduce(function (n, x) {
       return n + x.qty;
     }, 0);
   }
-  function cartProductQuantity(productId) {
-    return state.cart.reduce(function (total, item) {
-      return total + (item.productId === productId ? item.qty : 0);
-    }, 0);
-  }
-  function cartSignature() {
-    return state.cart
-      .map(function (item) {
-        return item.productId + ":" + item.size + ":" + item.qty;
-      })
-      .sort()
-      .join("|");
-  }
-  function currentQuote() {
-    return state.quote && state.quote.signature === cartSignature()
-      ? state.quote
-      : null;
-  }
-  function invalidateQuote() {
-    state.quote = null;
+  function cartHasInventoryIssue() {
+    return state.cart.some(function (item) {
+      const p = product(item.productId);
+      return !p || stockForSize(p, item.size) < Number(item.qty || 0);
+    });
   }
   function subtotal() {
-    const quote = currentQuote();
-    if (quote) return Number(quote.subtotal || 0);
     return state.cart.reduce(function (n, x) {
       const p = product(x.productId);
       return n + (p ? p.price * x.qty : 0);
     }, 0);
   }
   function delivery() {
-    const quote = currentQuote();
-    if (quote) return Number(quote.deliveryFee || 0);
     return state.cart.reduce(function (n, x) {
       const p = product(x.productId);
       return n + (p ? Number(p.deliveryFee || 0) * x.qty : 0);
     }, 0);
   }
-  function discount() {
-    const quote = currentQuote();
-    return quote ? Number(quote.discount || 0) : 0;
-  }
   function total() {
-    const quote = currentQuote();
-    return quote
-      ? Number(quote.total || 0)
-      : subtotal() + delivery() - discount();
+    return subtotal() + delivery();
+  }
+  function discount() {
+    return state.quote ? Number(state.quote.discount || 0) : 0;
+  }
+  function grandTotal() {
+    return state.quote ? Number(state.quote.total || 0) : total();
+  }
+  function quotedSubtotal() {
+    return state.quote ? Number(state.quote.subtotal || 0) : subtotal();
+  }
+  function quotedDelivery() {
+    return state.quote ? Number(state.quote.deliveryFee || 0) : delivery();
+  }
+  function clearQuote() {
+    state.quote = null;
+    state.promo = null;
   }
   async function api(path, options) {
     const config = Object.assign({ headers: {} }, options || {});
@@ -350,18 +430,18 @@
     save(K.wish, state.wish);
   }
   function url() {
-    let p = true
-      ? location.hash.slice(1) || "/"
-      : location.pathname + location.search;
+    let p = runtime.api
+      ? location.pathname + location.search
+      : location.hash.slice(1) || "/";
     if (!p.startsWith("/")) p = "/" + p;
     return new URL(p, "https://joneskick.local");
   }
   function href(p) {
-    return true ? "#" + p : p;
+    return runtime.api ? p : "#" + p;
   }
   function go(p) {
     close();
-    if (true) {
+    if (!runtime.api) {
       if (location.hash === "#" + p) render();
       else location.hash = p;
     } else {
@@ -470,11 +550,15 @@
       a("/contact") +
       '" href="' +
       href("/contact") +
-      '" data-route="/contact">Contact</a></nav><div class="header-actions"><button class="header-action" data-search-trigger aria-label="Search">' +
+      '" data-route="/contact">Contact</a><a class="' +
+      a("/track-order") +
+      '" href="' +
+      href("/track-order") +
+      '" data-route="/track-order">Track order</a></nav><div class="header-actions"><button class="header-action" data-search-trigger aria-label="Search">' +
       icon("search") +
       '</button><a class="header-action" href="' +
       href("/wishlist") +
-      '" data-route="/wishlist" aria-label="Saved sneakers">' +
+      '" data-route="/wishlist" aria-label="Saved favourites">' +
       icon("heart") +
       (state.wish.length
         ? '<span class="badge">' + state.wish.length + "</span>"
@@ -496,15 +580,14 @@
       href("/contact") +
       '" data-route="/contact">Contact</a><a href="' +
       href("/wishlist") +
-      '" data-route="/wishlist">Saved sneakers</a><a href="' +
+      '" data-route="/wishlist">Saved favourites</a><a href="' +
+      href("/track-order") +
+      '" data-route="/track-order">Track order</a><a href="' +
       href("/admin") +
       '" data-route="/admin">Admin</a></nav>';
   }
   function footer() {
-    const phone = state.settings.phone || defaults.phone,
-      whatsapp = secureUrl(state.settings.whatsappUrl, defaults.whatsappUrl),
-      instagram = secureUrl(state.settings.instagramUrl, defaults.instagramUrl),
-      tiktok = secureUrl(state.settings.tiktokUrl, defaults.tiktokUrl);
+    const phone = state.settings.phone || defaults.phone;
     document.getElementById("site-footer").innerHTML =
       '<footer class="site-footer"><div class="container"><div class="footer-top"><div class="footer-brand"><a class="brand" href="' +
       href("/") +
@@ -518,27 +601,23 @@
       href("/shop?category=Jordan") +
       '" data-route="/shop?category=Jordan">Jordan</a><a href="' +
       href("/cart") +
-      '" data-route="/cart">Shopping bag</a><a href="' +
-      href("/wishlist") +
-      '" data-route="/wishlist">Saved sneakers</a></div></div><div><p class="footer-title">Company</p><div class="footer-links"><a href="' +
+      '" data-route="/cart">Shopping bag</a></div></div><div><p class="footer-title">Company</p><div class="footer-links"><a href="' +
       href("/about") +
       '" data-route="/about">Our story</a><a href="' +
       href("/contact") +
       '" data-route="/contact">Contact</a><a href="' +
+      href("/track-order") +
+      '" data-route="/track-order">Track an order</a><a href="' +
       href("/admin") +
-      '" data-route="/admin">Admin access</a></div></div><div><p class="footer-title">Connect</p><div class="footer-links"><a href="' +
-      whatsapp +
-      '" target="_blank" rel="noopener">WhatsApp</a><a href="' +
-      instagram +
-      '" target="_blank" rel="noopener">Instagram</a><a href="' +
-      tiktok +
-      '" target="_blank" rel="noopener">TikTok</a><a href="tel:' +
+      '" data-route="/admin">Admin access</a></div></div><div><p class="footer-title">Connect</p><div class="footer-links"><a href="https://wa.me/message/6BIGK72XFX23L1" target="_blank" rel="noopener">WhatsApp</a><a href="https://www.instagram.com/teejonesonly" target="_blank" rel="noopener">Instagram</a><a href="https://www.tiktok.com/@tee_jones247" target="_blank" rel="noopener">TikTok</a><a href="' +
       esc(phoneHref(phone)) +
       '">' +
       esc(phone) +
       '</a></div></div></div><div class="footer-bottom"><span>© ' +
       new Date().getFullYear() +
-      " Jones Kicks. All rights reserved.</span><span>Premium sneakers • Sizes 40–45</span></div></div></footer>";
+      " " +
+      esc(state.settings.storeName || "Jones Kicks") +
+      ". All rights reserved.</span><span>Premium sneakers • Sizes 40–45</span></div></div></footer>";
   }
   function slide(i, k, t, o, c, image, fb) {
     return (
@@ -659,11 +738,7 @@
       });
     if (state.sort === "new")
       list.sort(function (a, b) {
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      });
-    if (state.sort === "featured")
-      list.sort(function (a, b) {
-        return Number(Boolean(b.featured)) - Number(Boolean(a.featured));
+        return b.createdAt - a.createdAt;
       });
     const cats = ["All"].concat(
       Array.from(
@@ -739,20 +814,8 @@
       money(p.comparePrice) +
       '</span></div><p class="detail-desc">' +
       esc(p.description) +
-      '</p><div class="size-label"><span>Select your size</span><span>EU 40–45</span></div><div class="size-grid">' +
-      p.sizes
-        .map(function (s) {
-          return (
-            '<button class="size-btn" data-size="' +
-            s +
-            '" ' +
-            (p.stock < 1 ? "disabled" : "") +
-            ">" +
-            s +
-            "</button>"
-          );
-        })
-        .join("") +
+      '</p><div class="size-label"><span>Select your size</span><span>Unavailable sizes are marked sold out</span></div><div class="size-grid">' +
+      sizeButtons(p) +
       '</div><div class="detail-actions"><button class="btn btn-acid btn-block" data-add="' +
       esc(p.id) +
       '" disabled>Add to bag</button><button class="round-btn ' +
@@ -780,6 +843,15 @@
       .map(function (x) {
         const p = product(x.productId);
         if (!p) return "";
+        const available = stockForSize(p, x.size),
+          stockWarning =
+            available < x.qty
+              ? '<span class="cart-stock-warning">' +
+                (available < 1
+                  ? "This size is now sold out"
+                  : "Only " + available + " left in this size") +
+                "</span>"
+              : "";
         if (mini)
           return (
             '<div class="mini-item"><div class="mini-thumb">' +
@@ -792,7 +864,9 @@
             x.qty +
             " • Delivery " +
             money((p.deliveryFee || 0) * x.qty) +
-            "</p></div><strong>" +
+            "</p>" +
+            stockWarning +
+            "</div><strong>" +
             money(p.price * x.qty) +
             "</strong></div>"
           );
@@ -807,7 +881,9 @@
           esc(p.category) +
           " • Delivery " +
           money((p.deliveryFee || 0) * x.qty) +
-          '</div><div class="qty"><button data-qty="down" data-line="' +
+          "</div>" +
+          stockWarning +
+          '<div class="qty"><button data-qty="down" data-line="' +
           esc(x.productId) +
           "|" +
           x.size +
@@ -817,7 +893,9 @@
           esc(x.productId) +
           "|" +
           x.size +
-          '">+</button></div></div><div class="cart-price"><strong>' +
+          '" ' +
+          (x.qty >= available ? "disabled" : "") +
+          '>+</button></div></div><div class="cart-price"><strong>' +
           money(p.price * x.qty) +
           '</strong><button class="remove-link" data-remove="' +
           esc(x.productId) +
@@ -829,29 +907,29 @@
       .join("");
   }
   function summary(button) {
-    const quote = currentQuote(),
-      promotion = quote && quote.promotion;
     return (
       '<div class="panel summary"><h2>Order summary</h2><div class="summary-line"><span>Products</span><strong>' +
-      money(subtotal()) +
+      money(quotedSubtotal()) +
       '</strong></div><div class="summary-line"><span>Product delivery fees</span><strong>' +
-      money(delivery()) +
-      '</strong></div><p class="summary-help">Delivery is calculated from the fee set by the admin for each pair.</p><div class="promo"><input aria-label="Promo code" placeholder="Promo code" value="' +
-      esc(promotion ? promotion.code : "") +
-      '" ' +
-      (promotion ? "readonly" : "") +
-      '><button type="button" ' +
-      (promotion ? 'data-remove-promo>Remove' : 'data-promo>Apply') +
-      "</button></div>" +
+      money(quotedDelivery()) +
+      '</strong></div>' +
       (discount()
-        ? '<div class="summary-line discount"><span>Promo discount (' +
-          esc(promotion.code) +
-          ')</span><strong>−' +
+        ? '<div class="summary-line discount-line"><span>Promo ' +
+          esc(state.promo?.code || "") +
+          '</span><strong>−' +
           money(discount()) +
           "</strong></div>"
         : "") +
-      '<div class="summary-line total"><span>Total</span><strong>' +
-      money(total()) +
+      '<p class="summary-help">Delivery is calculated from the fee set by the admin for each pair.</p><div class="promo"><input id="promo-code" value="' +
+      esc(state.promo?.code || "") +
+      '" placeholder="Promo code"><button data-promo>' +
+      (state.promo ? "Recheck" : "Apply") +
+      "</button>" +
+      (state.promo
+        ? '<button class="promo-remove" data-promo-remove type="button">Remove</button>'
+        : "") +
+      '</div><div class="summary-line total"><span>Total</span><strong>' +
+      money(grandTotal()) +
       "</strong></div>" +
       button +
       '<p class="secure-note">Secure order flow • Payment details are handled by Paystack</p></div>'
@@ -882,72 +960,68 @@
       "</div></section>"
     );
   }
-  function wishlist() {
-    const saved = state.products.filter(function (item) {
-      return state.wish.includes(item.id);
-    });
-    return (
-      '<section class="page-hero"><div class="container"><div class="breadcrumbs"><a href="' +
-      href("/") +
-      '" data-route="/">Home</a><span>/</span><span>Saved sneakers</span></div><p class="eyebrow">Your shortlist</p><h1 class="display page-title">Saved pairs.</h1></div></section><section class="section-sm"><div class="container"><div class="results-line"><span>' +
-      saved.length +
-      " saved sneaker" +
-      (saved.length === 1 ? "" : "s") +
-      '</span><a href="' +
-      href("/shop") +
-      '" data-route="/shop">Browse all sneakers</a></div><div class="product-grid">' +
-      (saved.length
-        ? saved.map(card).join("")
-        : '<div class="empty-state"><h2>No saved pairs yet</h2><p>Tap the heart on any sneaker to keep it here.</p><a class="btn btn-acid" href="' +
-          href("/shop") +
-          '" data-route="/shop">Explore sneakers</a></div>') +
-      "</div></div></section>"
-    );
-  }
-  function checkout(u) {
+  function checkout() {
     if (!state.cart.length) return cart();
-    const paymentError = u && u.searchParams.get("payment"),
-      paymentMessages = {
-        "missing-reference": "The payment provider did not return an order reference. Please try again.",
-        "order-not-found": "We could not match that payment to an order. Please contact support before trying again.",
-        "verification-failed": "Payment could not be verified. If you were debited, contact support with your payment reference.",
-      };
-    const paymentNote = runtime.api
-      ? runtime.paymentMode === "paystack"
-        ? "You will be redirected to Paystack to complete your payment securely."
-        : "Development demo payment is enabled. Switch PAYMENT_MODE to paystack for live checkout."
-      : "Static preview: no live charge will occur until the backend is running.";
+    const paymentIssue = url().searchParams.get("payment"),
+      inventoryReady = !cartHasInventoryIssue(),
+      keyMatchesEnvironment =
+        (runtime.paymentEnvironment === "live" &&
+          /^pk_live_[A-Za-z0-9]+$/.test(runtime.paystackPublicKey)) ||
+        (runtime.paymentEnvironment === "test" &&
+          /^pk_test_[A-Za-z0-9]+$/.test(runtime.paystackPublicKey)),
+      paymentReady =
+        runtime.api &&
+        runtime.paymentConfigured &&
+        keyMatchesEnvironment &&
+        inventoryReady,
+      paymentNote = !inventoryReady
+        ? "Update your bag before payment because a selected size is sold out or has insufficient stock."
+        : !runtime.api
+        ? "Catalogue preview only. Start the Node.js backend to enable secure Paystack checkout."
+        : !paymentReady
+          ? "Secure Paystack checkout is not configured on this server yet."
+          : runtime.paymentEnvironment === "live"
+            ? "Live Paystack checkout is ready. You will be redirected to Paystack to complete payment securely."
+            : "Paystack test checkout is active for local QA. Production startup only accepts live Paystack keys.";
     return (
       '<section class="page-hero"><div class="container"><div class="breadcrumbs"><a href="' +
       href("/cart") +
-      '" data-route="/cart">Bag</a><span>/</span><span>Checkout</span></div><p class="eyebrow">One final step</p><h1 class="display page-title">Delivery & payment.</h1></div></section><section class="section-sm"><div class="container checkout-layout"><form class="panel checkout-form" id="checkout-form"><div class="form-section"><div class="form-section-head"><span class="step-no">01</span><h2>Contact information</h2></div><div class="field-grid"><div class="field"><label>Full name</label><input name="fullName" autocomplete="name" required placeholder="Your full name"></div><div class="field"><label>Email address</label><input name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div><div class="field full"><label>Phone number</label><input name="phone" autocomplete="tel" inputmode="tel" required placeholder="e.g. 0801 234 5678"></div></div></div><div class="form-section"><div class="form-section-head"><span class="step-no">02</span><h2>Delivery details</h2></div><div class="field-grid"><div class="field full"><label>Delivery address</label><input name="address" autocomplete="street-address" required placeholder="House number, street and area"></div><div class="field"><label>City / town</label><input name="city" required></div><div class="field"><label>State</label><input name="region" required></div><div class="field full"><label>Delivery note (optional)</label><textarea name="notes" placeholder="Landmark or helpful instruction"></textarea></div></div></div><div class="form-section"><div class="form-section-head"><span class="step-no">03</span><h2>Payment method</h2></div><label class="payment-option"><input type="radio" name="payment" value="online" checked><span><strong>Paystack secure payment</strong><span>Choose card, bank transfer, USSD or another available Paystack channel.</span></span></label><p class="prototype-note">' +
-      esc(paymentNote) +
-      '</p></div>' +
-      (paymentMessages[paymentError]
-        ? '<div class="form-alert" role="alert">' +
-          esc(paymentMessages[paymentError]) +
-          "</div>"
+      '" data-route="/cart">Bag</a><span>/</span><span>Checkout</span></div><p class="eyebrow">One final step</p><h1 class="display page-title">Delivery & payment.</h1></div></section><section class="section-sm"><div class="container checkout-layout"><form class="panel checkout-form" id="checkout-form">' +
+      (paymentIssue
+        ? '<div class="payment-alert"><strong>Payment was not completed.</strong><span>Your bag is still here. Confirm your details and try again, or contact Jones Kicks if you were debited.</span></div>'
         : "") +
-      '<button class="btn btn-acid btn-block" data-checkout-submit type="submit" ' +
-      (state.checkoutBusy ? "disabled" : "") +
+      '<div class="form-section"><div class="form-section-head"><span class="step-no">01</span><h2>Contact information</h2></div><div class="field-grid"><div class="field"><label>Full name</label><input name="fullName" autocomplete="name" required placeholder="Your full name"></div><div class="field"><label>Email address</label><input name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div><div class="field full"><label>Phone number</label><input name="phone" autocomplete="tel" inputmode="tel" required placeholder="e.g. 0801 234 5678"></div></div></div><div class="form-section"><div class="form-section-head"><span class="step-no">02</span><h2>Delivery details</h2></div><div class="field-grid"><div class="field full"><label>Delivery address</label><input name="address" autocomplete="street-address" required placeholder="House number, street and area"></div><div class="field"><label>City / town</label><input name="city" required></div><div class="field"><label>State</label><input name="region" required></div><div class="field full"><label>Delivery note (optional)</label><textarea name="notes" placeholder="Landmark or helpful instruction"></textarea></div></div></div><div class="form-section"><div class="form-section-head"><span class="step-no">03</span><h2>Payment method</h2></div><label class="payment-option"><input type="radio" name="payment" value="online" checked><span><strong>Paystack secure payment</strong><span>Choose card, bank transfer, USSD or another available Paystack channel.</span></span></label><p class="prototype-note">' +
+      esc(paymentNote) +
+      '</p></div><button class="btn btn-acid btn-block" type="submit"' +
+      (paymentReady ? "" : " disabled") +
       ">" +
-      (state.checkoutBusy ? "Preparing secure payment…" : "Pay securely • " + money(total())) +
+      (paymentReady ? "Pay securely • " + money(grandTotal()) : "Paystack checkout unavailable") +
       '</button></form><aside class="panel checkout-summary"><div class="admin-card-head"><h3>Your order</h3><a href="' +
       href("/cart") +
       '" data-route="/cart">Edit bag</a></div><div class="mini-items">' +
       rows(true) +
       '</div><div class="summary-line"><span>Products</span><strong>' +
-      money(subtotal()) +
+      money(quotedSubtotal()) +
       '</strong></div><div class="summary-line"><span>Product delivery fees</span><strong>' +
-      money(delivery()) +
-      "</strong></div>" +
+      money(quotedDelivery()) +
+      '</strong></div>' +
       (discount()
-        ? '<div class="summary-line discount"><span>Promo discount</span><strong>−' +
+        ? '<div class="summary-line discount-line"><span>Promo ' +
+          esc(state.promo?.code || "") +
+          '</span><strong>−' +
           money(discount()) +
           "</strong></div>"
         : "") +
-      '<div class="summary-line total"><span>Total</span><strong>' +
-      money(total()) +
+      '<div class="promo checkout-promo"><input id="promo-code" value="' +
+      esc(state.promo?.code || "") +
+      '" placeholder="Promo code"><button data-promo type="button">' +
+      (state.promo ? "Recheck" : "Apply") +
+      "</button>" +
+      (state.promo
+        ? '<button class="promo-remove" data-promo-remove type="button">Remove</button>'
+        : "") +
+      '</div><div class="summary-line total"><span>Total</span><strong>' +
+      money(grandTotal()) +
       "</strong></div></aside></div></section>"
     );
   }
@@ -959,32 +1033,72 @@
       o = state.orders.find(function (x) {
         return x.id === ref;
       }),
-      needsReview = o && o.status === "Needs review",
+      paid = Boolean(
+        o && String(o.paymentStatus || "").toLowerCase().includes("paid"),
+      );
+    let eyebrow = "Secure verification",
+      title = "Confirming your order.",
+      lead =
+        "We are loading the private order record before showing a payment confirmation.",
       note = runtime.api
-        ? "Your payment and order are recorded securely. Your receipt is sent automatically when email delivery is configured."
+        ? "If this page was opened directly and verification cannot complete, use Track Order with your order reference, checkout email and phone number."
         : "This order belongs to the static interface preview.";
+
+    if (o && paid && o.status === "Needs review") {
+      eyebrow = "Payment confirmed";
+      title = "Payment received. We are reviewing your order.";
+      lead =
+        "Your payment is verified, but the order needs a stock or fulfilment check before it can be reserved for delivery.";
+    } else if (o && paid) {
+      eyebrow = "Payment confirmed";
+      title = "Your pair is reserved.";
+      lead =
+        "Thanks for shopping Jones Kicks. Keep your order reference below — you can use it to check fulfilment and delivery progress at any time.";
+    } else if (o) {
+      eyebrow = "Payment pending";
+      title = "Your order is recorded.";
+      lead =
+        "The order exists, but payment has not yet been verified. Do not treat it as paid until the status below changes to paid.";
+    }
+
     return (
-      '<section class="success-wrap"><div class="success-card animate__animated animate__fadeInUp"><span class="success-icon">✓</span><p class="eyebrow">Payment confirmed</p><h1 class="display">' +
-      (needsReview ? "Your order is being reviewed." : "Your pair is reserved.") +
+      '<section class="success-wrap"><div class="success-card animate__animated animate__fadeInUp"><span class="success-icon">' +
+      (paid ? "✓" : "↻") +
+      '</span><p class="eyebrow">' +
+      esc(eyebrow) +
+      '</p><h1 class="display">' +
+      esc(title) +
       '</h1><p class="muted">' +
-      (needsReview
-        ? "Payment is confirmed, but one item needs a stock check. The Jones Kicks team will contact you shortly."
-        : "Thanks for shopping Jones Kicks. The order is now in the admin order centre and the team will confirm the delivery step.") +
+      esc(lead) +
       '</p><span class="order-ref">Order ' +
       esc(ref) +
       "</span>" +
       (o
-        ? "<p><strong>" +
-          money(o.total) +
-          "</strong> • " +
+        ? '<div class="receipt-summary"><div class="summary-line"><span>Payment</span><strong>' +
           esc(o.paymentStatus) +
-          "</p>"
-        : "") +
+          '</strong></div><div class="summary-line"><span>Fulfilment</span><strong>' +
+          esc(o.status) +
+          '</strong></div>' +
+          (o.promoCode
+            ? '<div class="summary-line"><span>Promo</span><strong>' +
+              esc(o.promoCode) +
+              "</strong></div>"
+            : "") +
+          (Number(o.discount || 0)
+            ? '<div class="summary-line discount-line"><span>Discount</span><strong>−' +
+              money(o.discount) +
+              "</strong></div>"
+            : "") +
+          '<div class="summary-line total"><span>Total</span><strong>' +
+          money(o.total) +
+          "</strong></div></div>" +
+          orderTimeline(o)
+        : '<p class="muted">Verified order details are not available in this browser session yet.</p>') +
       '<div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:22px"><a class="btn btn-acid" href="' +
+      href("/track-order") +
+      '" data-route="/track-order">Track this order</a><a class="btn btn-outline" href="' +
       href("/shop") +
-      '" data-route="/shop">Continue shopping</a><a class="btn btn-outline" href="' +
-      secureUrl(state.settings.whatsappUrl, defaults.whatsappUrl) +
-      '" target="_blank" rel="noopener">Chat on WhatsApp</a></div><p class="prototype-note" style="text-align:left">' +
+      '" data-route="/shop">Continue shopping</a><a class="btn btn-outline" href="https://wa.me/message/6BIGK72XFX23L1" target="_blank" rel="noopener">Chat on WhatsApp</a></div><p class="prototype-note" style="text-align:left">' +
       esc(note) +
       "</p></div></section>"
     );
@@ -1002,7 +1116,75 @@
   }
   function contact() {
     const phone = state.settings.phone || defaults.phone;
-    return `<section class="page-hero"><div class="container"><div class="breadcrumbs"><a href="${href("/")}" data-route="/">Home</a><span>/</span><span>Contact</span></div><p class="eyebrow">Talk to us</p><h1 class="display page-title">We are one message away.</h1></div></section><section class="section-sm"><div class="container contact-layout"><div class="contact-card"><p class="eyebrow">Jones Kicks support</p><h2 class="display">Let us help you find the pair.</h2><div class="contact-links"><a class="contact-link" href="tel:${esc(phoneHref(phone))}"><div><strong>Call us</strong><span>${esc(phone)}</span></div><b>↗</b></a><a class="contact-link" href="${secureUrl(state.settings.whatsappUrl, defaults.whatsappUrl)}" target="_blank" rel="noopener"><div><strong>WhatsApp</strong><span>Fast order and sizing support</span></div><b>↗</b></a><a class="contact-link" href="${secureUrl(state.settings.instagramUrl, defaults.instagramUrl)}" target="_blank" rel="noopener"><div><strong>Instagram</strong><span>${esc(state.settings.instagramHandle || defaults.instagramHandle)}</span></div><b>↗</b></a><a class="contact-link" href="${secureUrl(state.settings.tiktokUrl, defaults.tiktokUrl)}" target="_blank" rel="noopener"><div><strong>TikTok</strong><span>${esc(state.settings.tiktokHandle || defaults.tiktokHandle)}</span></div><b>↗</b></a></div></div><form class="contact-form-card" id="contact-form"><p class="eyebrow">Send an enquiry</p><h2 style="margin:0 0 26px;font-size:27px">How can we help?</h2><div class="field-grid"><div class="field"><label>Your name</label><input name="name" autocomplete="name" required></div><div class="field"><label>Phone number</label><input name="phone" autocomplete="tel" inputmode="tel" required></div><div class="field full"><label>Message</label><textarea name="message" required placeholder="Tell us the sneaker or size you need"></textarea></div></div><button class="btn btn-acid" style="margin-top:20px">Send enquiry</button><p class="prototype-note">Your enquiry is saved securely for Jones Kicks support.</p></form></div></section>`;
+    return `<section class="page-hero"><div class="container"><div class="breadcrumbs"><a href="${href("/")}" data-route="/">Home</a><span>/</span><span>Contact</span></div><p class="eyebrow">Talk to us</p><h1 class="display page-title">We are one message away.</h1></div></section><section class="section-sm"><div class="container contact-layout"><div class="contact-card"><p class="eyebrow">Jones Kicks support</p><h2 class="display">Let us help you find the pair.</h2><div class="contact-links"><a class="contact-link" href="${esc(phoneHref(phone))}"><div><strong>Call us</strong><span>${esc(phone)}</span></div><b>↗</b></a><a class="contact-link" href="https://wa.me/message/6BIGK72XFX23L1" target="_blank" rel="noopener"><div><strong>WhatsApp</strong><span>Fast order and sizing support</span></div><b>↗</b></a><a class="contact-link" href="https://www.instagram.com/teejonesonly" target="_blank" rel="noopener"><div><strong>Instagram</strong><span>@teejonesonly</span></div><b>↗</b></a><a class="contact-link" href="https://www.tiktok.com/@tee_jones247" target="_blank" rel="noopener"><div><strong>TikTok</strong><span>@tee_jones247</span></div><b>↗</b></a></div></div><form class="contact-form-card" id="contact-form"><p class="eyebrow">Send an enquiry</p><h2 style="margin:0 0 26px;font-size:27px">How can we help?</h2><div class="field-grid"><div class="field"><label>Your name</label><input name="name" required></div><div class="field"><label>Phone number</label><input name="phone" required></div><div class="field full"><label>Message</label><textarea name="message" required placeholder="Tell us the sneaker or size you need"></textarea></div></div><button class="btn btn-acid" style="margin-top:20px">Send enquiry</button><p class="prototype-note">Your enquiry is saved securely for Jones Kicks support.</p></form></div></section>`;
+  }
+  function wishlist() {
+    const list = state.products.filter(function (p) {
+      return state.wish.includes(p.id) && p.active !== false;
+    });
+    if (!list.length)
+      return (
+        '<section class="success-wrap"><div class="success-card"><span class="success-icon">♡</span><p class="eyebrow">Saved favourites</p><h1 class="display">Your shortlist is empty.</h1><p class="muted">Tap the heart on any sneaker to keep it here for later.</p><a class="btn btn-acid" href="' +
+        href("/shop") +
+        '" data-route="/shop">Explore sneakers</a></div></section>'
+      );
+    return (
+      '<section class="page-hero"><div class="container"><div class="breadcrumbs"><a href="' +
+      href("/") +
+      '" data-route="/">Home</a><span>/</span><span>Favourites</span></div><p class="eyebrow">Your saved pairs</p><h1 class="display page-title">Favourites.</h1></div></section><section class="section-sm"><div class="container"><div class="section-head"><div><h2>' +
+      list.length +
+      " saved pair" +
+      (list.length === 1 ? "" : "s") +
+      '</h2></div><a class="btn btn-outline" href="' +
+      href("/shop") +
+      '" data-route="/shop">Keep browsing</a></div><div class="product-grid">' +
+      list.map(card).join("") +
+      "</div></div></section>"
+    );
+  }
+  function orderTimeline(order) {
+    const history = (order && order.statusHistory) || [];
+    if (!history.length) return "";
+    return (
+      '<div class="order-timeline">' +
+      history
+        .map(function (entry, index) {
+          return (
+            '<div class="timeline-step ' +
+            (index === history.length - 1 ? "current" : "") +
+            '"><span></span><div><strong>' +
+            esc(entry.status) +
+            "</strong><small>" +
+            date(entry.changedAt) +
+            "</small></div></div>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+  function trackOrder() {
+    const o = state.trackedOrder;
+    return (
+      '<section class="page-hero"><div class="container"><div class="breadcrumbs"><a href="' +
+      href("/") +
+      '" data-route="/">Home</a><span>/</span><span>Track order</span></div><p class="eyebrow">Delivery updates</p><h1 class="display page-title">Track your order.</h1></div></section><section class="section-sm"><div class="container track-layout"><form class="panel checkout-form" id="track-order-form"><div class="form-section"><div class="form-section-head"><span class="step-no">01</span><h2>Find your order</h2></div><p class="muted">Enter the same email and phone number used at checkout.</p><div class="field-grid"><div class="field full"><label>Order reference</label><input name="reference" required placeholder="JK-20260907-XXXXXXXX"></div><div class="field"><label>Email address</label><input name="email" type="email" required></div><div class="field"><label>Phone number</label><input name="phone" required></div></div></div><button class="btn btn-acid btn-block">Check order status</button></form><aside class="panel tracking-result">' +
+      (o
+        ? '<p class="eyebrow">Order ' +
+          esc(o.reference) +
+          '</p><h2 style="margin-top:8px">' +
+          esc(o.status) +
+          '</h2><div class="summary-line"><span>Payment</span><strong>' +
+          esc(o.paymentStatus) +
+          '</strong></div><div class="summary-line"><span>Total</span><strong>' +
+          money(o.total) +
+          '</strong></div><div class="summary-line"><span>Placed</span><strong>' +
+          date(o.createdAt) +
+          "</strong></div>" +
+          orderTimeline(o)
+        : '<div class="empty-state"><span class="success-icon">↗</span><h2>Your delivery journey will appear here.</h2><p>We will show payment confirmation and every fulfilment update recorded by Jones Kicks.</p></div>') +
+      "</aside></div></section>"
+    );
   }
   function notFound() {
     return (
@@ -1035,7 +1217,7 @@
       ["catalogue", "◇", "Catalogue"],
       ["orders", "▤", "Orders"],
       ["promotions", "%", "Promotions"],
-      ["messages", "✉", "Inbox"],
+      ["messages", "✉", "Messages"],
       ["subscribers", "+", "Subscribers"],
       ["analytics", "↗", "Analytics"],
       ["settings", "⚙", "Settings"],
@@ -1123,23 +1305,15 @@
             return n + Number(o.total || 0);
           }, 0),
       orderCount = metrics ? metrics.orders : state.orders.length,
-      newOrderCount = metrics
-        ? metrics.newOrders
-        : state.orders.filter(function (o) {
-            return o.status === "New";
-          }).length,
       visitorCount = metrics
         ? metrics.totalVisitors
         : Number(state.views.total || 0),
       catalogueCount = metrics ? metrics.products : state.products.length,
-      lowStock = metrics
-        ? metrics.lowStock
-        : state.products.filter(function (item) {
-            return item.stock <= 4;
+      fresh = metrics
+        ? Number(metrics.newOrders || 0)
+        : state.orders.filter(function (o) {
+            return o.status === "New";
           }).length,
-      unreadMessages = metrics ? metrics.unreadMessages : 0,
-      activeSubscribers = metrics ? metrics.activeSubscribers : 0,
-      activePromotions = metrics ? metrics.activePromotions : 0,
       days = viewDays(),
       max = Math.max.apply(
         null,
@@ -1149,32 +1323,27 @@
           })
           .concat([1]),
       ),
-      top =
-        state.dashboard && state.dashboard.topProducts?.length
-          ? state.dashboard.topProducts.map(function (item) {
-              return Object.assign({ fallback: fallback[0] }, item);
-            })
-          : state.products.slice(0, 5);
+      top = state.products.slice(0, 5);
     return (
       '<div class="admin-heading"><div><h2>Store overview</h2><p>Live catalogue, payment, order and visitor activity.</p></div><button class="btn btn-acid" data-new-product>Add sneaker</button></div><div class="kpi-grid"><div class="kpi"><div class="kpi-top"><span>Unique visitors</span><span class="kpi-icon">↗</span></div><strong>' +
       Number(visitorCount).toLocaleString() +
       '</strong><small>Tracked across the website</small></div><div class="kpi"><div class="kpi-top"><span>Total orders</span><span class="kpi-icon">▤</span></div><strong>' +
       orderCount +
       "</strong><small>" +
-      newOrderCount +
+      fresh +
       ' new paid orders</small></div><div class="kpi"><div class="kpi-top"><span>Paid revenue</span><span class="kpi-icon">₦</span></div><strong>' +
       money(rev) +
       '</strong><small>Verified payment value</small></div><div class="kpi"><div class="kpi-top"><span>Catalogue</span><span class="kpi-icon">◇</span></div><strong>' +
       catalogueCount +
-      '</strong><small>Active sneaker styles</small></div></div><div class="ops-grid"><button data-admin-tab="catalogue"><span>Low stock</span><strong>' +
-      lowStock +
-      '</strong></button><button data-admin-tab="messages"><span>Unread enquiries</span><strong>' +
-      unreadMessages +
-      '</strong></button><button data-admin-tab="subscribers"><span>Drop-list subscribers</span><strong>' +
-      activeSubscribers +
-      '</strong></button><button data-admin-tab="promotions"><span>Active promotions</span><strong>' +
-      activePromotions +
-      '</strong></button></div><div class="admin-grid"><div class="admin-card"><div class="admin-card-head"><h3>Unique visitors • Last 7 days</h3><button data-admin-tab="analytics">View report</button></div><div class="chart">' +
+      '</strong><small>Active sneaker styles</small></div></div><div class="ops-strip"><button data-admin-tab="catalogue"><strong>' +
+      Number(metrics?.lowStock || 0) +
+      '</strong><span>Low stock</span></button><button data-admin-tab="messages"><strong>' +
+      Number(metrics?.newMessages || 0) +
+      '</strong><span>New messages</span></button><button data-admin-tab="subscribers"><strong>' +
+      Number(metrics?.subscribers || 0) +
+      '</strong><span>Active subscribers</span></button><button data-admin-tab="promotions"><strong>' +
+      Number(metrics?.coupons || 0) +
+      '</strong><span>Active promos</span></button></div><div class="admin-grid"><div class="admin-card"><div class="admin-card-head"><h3>Unique visitors • Last 7 days</h3><button data-admin-tab="analytics">View report</button></div><div class="chart">' +
       days
         .map(function (x) {
           return (
@@ -1186,7 +1355,7 @@
           );
         })
         .join("") +
-      '</div></div><div class="admin-card"><div class="admin-card-head"><h3>Top-selling sneakers</h3><button data-admin-tab="catalogue">Manage</button></div><div class="top-products">' +
+      '</div></div><div class="admin-card"><div class="admin-card-head"><h3>Catalogue snapshot</h3><button data-admin-tab="catalogue">Manage</button></div><div class="top-products">' +
       top
         .map(function (p) {
           return (
@@ -1195,9 +1364,11 @@
             "<div><h4>" +
             esc(p.name) +
             "</h4><p>" +
-            (p.sales != null ? p.sales + " pairs sold" : p.stock + " pairs in stock") +
+            p.stock +
+            " pairs in stock<br>" +
+            esc(sizeStockSummary(p)) +
             "</p></div><strong>" +
-            (p.revenue != null ? money(p.revenue) : money(p.price)) +
+            money(p.price) +
             "</strong></div>"
           );
         })
@@ -1213,7 +1384,7 @@
         return (p.name + " " + p.category).toLowerCase().includes(q);
       });
     return (
-      '<div class="admin-heading"><div><h2>Sneaker catalogue</h2><p>Add pairs and update prices, delivery fees, pictures, stock and descriptions.</p></div><button class="btn btn-acid" data-new-product>Add sneaker</button></div><div class="table-card"><div class="table-tools"><form class="search-box" id="admin-product-search"><input name="query" value="' +
+      '<div class="admin-heading"><div><h2>Sneaker catalogue</h2><p>Add pairs and update prices, delivery fees, pictures, descriptions and stock for every size.</p></div><button class="btn btn-acid" data-new-product>Add sneaker</button></div><div class="table-card"><div class="table-tools"><form class="search-box" id="admin-product-search"><input name="query" value="' +
       esc(state.adminSearch) +
       '" placeholder="Search catalogue"><button>' +
       icon("search") +
@@ -1222,8 +1393,21 @@
       ' products</span></div><div class="data-table-wrap"><table class="data-table"><thead><tr><th>Product</th><th>Price</th><th>Delivery fee</th><th>Sizes</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
       list
         .map(function (p) {
-          const s =
-            p.stock < 1 ? "Sold out" : p.stock < 5 ? "Low stock" : "Active";
+          const inventory = sizeInventoryFor(p),
+            soldOutSizes = inventory.filter(function (entry) {
+              return entry.stock < 1;
+            }).length,
+            lowSizes = inventory.filter(function (entry) {
+              return entry.stock === 1;
+            }).length,
+            s =
+              p.stock < 1
+                ? "Sold out"
+                : soldOutSizes
+                  ? "Size sold out"
+                  : lowSizes
+                    ? "Low by size"
+                    : "Active";
           return (
             '<tr><td><div class="table-product">' +
             img(p) +
@@ -1237,10 +1421,14 @@
             money(p.comparePrice) +
             "</s></span></td><td><strong>" +
             money(p.deliveryFee || 0) +
-            '</strong><br><span class="muted">per pair</span></td><td>40–45</td><td>' +
+            '</strong><br><span class="muted">per pair</span></td><td><div class="size-stock-badges" title="' +
+            esc(sizeStockSummary(p)) +
+            '">' +
+            sizeStockBadges(p) +
+            "</div></td><td>" +
             p.stock +
             '</td><td><span class="status ' +
-            (s === "Sold out" ? "sold" : s === "Low stock" ? "low" : "") +
+            (s === "Sold out" ? "sold" : s !== "Active" ? "low" : "") +
             '">' +
             s +
             '</span></td><td><div class="actions"><button class="icon-btn" data-edit-product="' +
@@ -1255,221 +1443,165 @@
     );
   }
   function orders() {
-    const q = state.orderSearch.toLowerCase(),
-      list = runtime.api
-        ? state.orders
-        : state.orders.filter(function (order) {
-            const matchesText = (
-              order.id +
-              " " +
-              order.customer.fullName +
-              " " +
-              order.customer.phone +
-              " " +
-              (order.customer.email || "")
-            )
-              .toLowerCase()
-              .includes(q);
-            return (
-              matchesText &&
-              (!state.orderStatus || order.status === state.orderStatus)
-            );
-          }),
-      pagination =
-        runtime.api && state.orderPages > 1
-          ? '<div class="table-pagination"><button class="icon-btn" data-order-page="' +
-            (state.orderPage - 1) +
-            '" ' +
-            (state.orderPage <= 1 ? "disabled" : "") +
-            '>Previous</button><span>Page ' +
-            state.orderPage +
-            " of " +
-            state.orderPages +
-            " • " +
-            state.orderTotal +
-            ' orders</span><button class="icon-btn" data-order-page="' +
-            (state.orderPage + 1) +
-            '" ' +
-            (state.orderPage >= state.orderPages ? "disabled" : "") +
-            ">Next</button></div>"
-          : "";
-    const newOrders =
-      state.dashboard?.metrics?.newOrders ??
-      state.orders.filter(function (order) {
-        return order.status === "New";
-      }).length;
     return (
-      '<div class="admin-heading"><div><h2>Orders</h2><p>Review customer delivery details and update fulfilment.</p></div><span class="status pending">' +
-      newOrders +
-      ' new</span></div><div class="table-card"><div class="table-tools"><form class="search-box" id="admin-order-search"><input name="query" value="' +
+      '<div class="admin-heading"><div><h2>Orders</h2><p>Search customer orders, filter payment/fulfilment and update delivery progress.</p></div><span class="status pending">' +
+      state.orders.filter(function (o) {
+        return o.status === "New";
+      }).length +
+      ' new on this page</span></div><div class="table-card"><form class="order-tools" id="admin-order-search"><input name="search" value="' +
       esc(state.orderSearch) +
-      '" placeholder="Search order or customer"><button>' +
-      icon("search") +
-      '</button></form><select class="select-control" id="admin-order-status"><option value="">All statuses</option>' +
-      [
-        "Awaiting payment",
-        "New",
-        "Confirmed",
-        "Processing",
-        "Dispatched",
-        "Completed",
-        "Cancelled",
-        "Needs review",
-      ]
+      '" placeholder="Reference, customer, phone or email"><select name="status"><option value="">All fulfilment</option>' +
+      ["Awaiting payment", "New", "Confirmed", "Processing", "Dispatched", "Completed", "Cancelled", "Needs review"]
         .map(function (status) {
+          return '<option value="' + esc(status) + '" ' + (state.orderStatus === status ? "selected" : "") + '>' + esc(status) + "</option>";
+        })
+        .join("") +
+      '</select><select name="paymentStatus"><option value="">All payments</option>' +
+      ["pending", "processing", "paid", "failed", "refunded"]
+        .map(function (status) {
+          return '<option value="' + esc(status) + '" ' + (state.orderPaymentStatus === status ? "selected" : "") + '>' + esc(status) + "</option>";
+        })
+        .join("") +
+      '</select><button class="btn btn-outline">Apply</button></form><div class="data-table-wrap">' +
+      ordersTable(state.orders) +
+      '</div><div class="table-pagination"><span>' +
+      Number(state.orderTotal || state.orders.length).toLocaleString() +
+      ' matching orders</span><div><button class="icon-btn" data-order-page="' +
+      Math.max(1, state.orderPage - 1) +
+      '" ' +
+      (state.orderPage <= 1 ? "disabled" : "") +
+      '>Previous</button><span>Page ' +
+      state.orderPage +
+      " of " +
+      Math.max(1, state.orderPages) +
+      '</span><button class="icon-btn" data-order-page="' +
+      Math.min(Math.max(1, state.orderPages), state.orderPage + 1) +
+      '" ' +
+      (state.orderPage >= state.orderPages ? "disabled" : "") +
+      '>Next</button></div></div></div>'
+    );
+  }
+  function promotions() {
+    if (!state.coupons.length)
+      return (
+        '<div class="admin-heading"><div><h2>Promotions</h2><p>Create discount codes customers can apply in the bag or at checkout.</p></div><button class="btn btn-acid" data-new-coupon>Create promo code</button></div><div class="admin-card empty-state"><span class="success-icon">%</span><h2>No promo codes yet.</h2><p>Create your first percentage or fixed-value discount.</p></div>'
+      );
+    return (
+      '<div class="admin-heading"><div><h2>Promotions</h2><p>Manage promo codes, validity windows and usage limits.</p></div><button class="btn btn-acid" data-new-coupon>Create promo code</button></div><div class="table-card"><div class="data-table-wrap"><table class="data-table"><thead><tr><th>Code</th><th>Discount</th><th>Minimum</th><th>Usage</th><th>Validity</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
+      state.coupons
+        .map(function (c) {
+          const expired = c.endsAt && new Date(c.endsAt) < new Date(),
+            status = !c.active ? "Inactive" : expired ? "Expired" : "Active";
           return (
-            '<option value="' +
-            esc(status) +
-            '" ' +
-            (state.orderStatus === status ? "selected" : "") +
-            ">" +
-            esc(status) +
-            "</option>"
+            '<tr><td><strong>' +
+            esc(c.code) +
+            '</strong><br><span class="muted">' +
+            esc(c.description || "Customer promotion") +
+            '</span></td><td><strong>' +
+            (c.type === "percentage" ? esc(c.value) + "%" : money(c.value)) +
+            '</strong><br><span class="muted">' +
+            (c.maxDiscount ? "Cap " + money(c.maxDiscount) : "No cap") +
+            '</span></td><td>' +
+            money(c.minSubtotal || 0) +
+            '</td><td>' +
+            Number(c.usedCount || 0) +
+            (c.usageLimit ? " / " + Number(c.usageLimit) : " / ∞") +
+            '</td><td><span class="muted">' +
+            (c.startsAt ? date(c.startsAt) : "Immediately") +
+            " → " +
+            (c.endsAt ? date(c.endsAt) : "No expiry") +
+            '</span></td><td><span class="status ' +
+            (status === "Active" ? "" : "pending") +
+            '">' +
+            status +
+            '</span></td><td><div class="actions"><button class="icon-btn" data-edit-coupon="' +
+            esc(c._id || c.id) +
+            '">Edit</button><button class="icon-btn" data-delete-coupon="' +
+            esc(c._id || c.id) +
+            '">Disable</button></div></td></tr>'
           );
         })
         .join("") +
-      '</select></div>' +
-      ordersTable(list) +
-      pagination +
-      "</div>"
-    );
-  }
-  function promotionState(p) {
-    const now = Date.now();
-    if (!p.active) return "Inactive";
-    if (p.startsAt && new Date(p.startsAt).getTime() > now) return "Scheduled";
-    if (p.endsAt && new Date(p.endsAt).getTime() < now) return "Expired";
-    if (p.usageLimit && p.usedCount >= p.usageLimit) return "Used up";
-    return "Active";
-  }
-  function promotions() {
-    return (
-      '<div class="admin-heading"><div><h2>Promotions</h2><p>Create working discount codes for the shopping bag and checkout.</p></div><button class="btn btn-acid" data-new-promotion>Create promo code</button></div><div class="table-card">' +
-      (state.promotions.length
-        ? '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Code</th><th>Offer</th><th>Minimum</th><th>Usage</th><th>Validity</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
-          state.promotions
-            .map(function (p) {
-              const status = promotionState(p),
-                offer =
-                  p.type === "percentage"
-                    ? p.value + "% off"
-                    : money(p.value) + " off";
-              return (
-                '<tr><td><strong class="promo-code">' +
-                esc(p.code) +
-                "</strong></td><td>" +
-                esc(offer) +
-                (p.maximumDiscount
-                  ? '<br><span class="muted">Maximum ' +
-                    money(p.maximumDiscount) +
-                    "</span>"
-                  : "") +
-                "</td><td>" +
-                money(p.minimumSubtotal) +
-                "</td><td>" +
-                p.usedCount +
-                " / " +
-                (p.usageLimit || "Unlimited") +
-                "</td><td>" +
-                (p.endsAt ? date(p.endsAt) : "No expiry") +
-                '</td><td><span class="status ' +
-                (status === "Active" ? "" : "pending") +
-                '">' +
-                esc(status) +
-                '</span></td><td><div class="actions"><button class="icon-btn" data-edit-promotion="' +
-                esc(p.id) +
-                '">Edit</button>' +
-                (p.active
-                  ? '<button class="icon-btn" data-delete-promotion="' +
-                    esc(p.id) +
-                    '">Deactivate</button>'
-                  : "") +
-                "</div></td></tr>"
-              );
-            })
-            .join("") +
-          "</tbody></table></div>"
-        : '<div class="empty-state" style="padding:45px 20px"><h2>No promo codes yet</h2><p>Create a code customers can apply to eligible orders.</p><button class="btn btn-acid" data-new-promotion>Create promo code</button></div>') +
-      "</div>"
+      "</tbody></table></div></div>"
     );
   }
   function messages() {
+    if (!state.messages.length)
+      return '<div class="admin-heading"><div><h2>Customer messages</h2><p>Enquiries submitted from the contact page appear here.</p></div></div><div class="admin-card empty-state"><h2>No enquiries yet.</h2><p>New customer messages will appear here automatically.</p></div>';
     return (
-      '<div class="admin-heading"><div><h2>Customer inbox</h2><p>Read and manage enquiries submitted from the contact page.</p></div><span class="status pending">' +
-      state.messages.filter(function (item) {
-        return item.status === "New";
+      '<div class="admin-heading"><div><h2>Customer messages</h2><p>Review contact enquiries and keep their handling status organised.</p></div><span class="status pending">' +
+      state.messages.filter(function (m) {
+        return m.status === "New";
       }).length +
-      ' new</span></div><div class="table-card">' +
-      (state.messages.length
-        ? '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Customer</th><th>Message</th><th>Status</th><th>Received</th><th>Action</th></tr></thead><tbody>' +
-          state.messages
-            .map(function (item) {
-              return (
-                '<tr><td><strong>' +
-                esc(item.name) +
-                '</strong><br><a href="tel:' +
-                esc(phoneHref(item.phone)) +
-                '">' +
-                esc(item.phone) +
-                '</a></td><td><span class="message-preview">' +
-                esc(item.message) +
-                '</span></td><td><span class="status ' +
-                (item.status === "New" ? "pending" : "") +
-                '">' +
-                esc(item.status) +
-                "</span></td><td>" +
-                date(item.createdAt) +
-                '</td><td><button class="icon-btn" data-message-view="' +
-                esc(item._id || item.id) +
-                '">Open</button></td></tr>'
-              );
-            })
-            .join("") +
-          "</tbody></table></div>"
-        : '<div class="empty-state" style="padding:45px 20px"><h2>No enquiries yet</h2><p>Messages from the contact page will appear here.</p></div>') +
-      "</div>"
+      ' new</span></div><div class="table-card"><div class="data-table-wrap"><table class="data-table"><thead><tr><th>Customer</th><th>Message</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>' +
+      state.messages
+        .map(function (m) {
+          return (
+            '<tr><td><strong>' +
+            esc(m.name) +
+            '</strong><br><span class="muted">' +
+            esc(m.phone) +
+            '</span></td><td><div class="message-preview">' +
+            esc(m.message) +
+            '</div></td><td><span class="status ' +
+            (m.status === "New" ? "pending" : "") +
+            '">' +
+            esc(m.status) +
+            '</span></td><td>' +
+            date(m.createdAt) +
+            '</td><td><div class="actions"><button class="icon-btn" data-message-status="' +
+            esc(m._id || m.id) +
+            '" data-status="Read">Read</button><button class="icon-btn" data-message-status="' +
+            esc(m._id || m.id) +
+            '" data-status="Closed">Close</button><button class="icon-btn" data-delete-message="' +
+            esc(m._id || m.id) +
+            '">Delete</button></div></td></tr>'
+          );
+        })
+        .join("") +
+      "</tbody></table></div></div>"
     );
   }
   function subscribers() {
     return (
-      '<div class="admin-heading"><div><h2>WhatsApp subscribers</h2><p>Manage customers who joined the new-drop list.</p></div><span class="status">' +
-      state.subscribers.filter(function (item) {
-        return item.active;
+      '<div class="admin-heading"><div><h2>Drop-list subscribers</h2><p>WhatsApp numbers collected from the storefront newsletter form.</p></div><span class="status">' +
+      state.subscribers.filter(function (s) {
+        return s.active;
       }).length +
-      ' active</span></div><div class="table-card">' +
-      (state.subscribers.length
-        ? '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>WhatsApp number</th><th>Source</th><th>Joined</th><th>Status</th><th>Action</th></tr></thead><tbody>' +
+      ' active</span></div>' +
+      (!state.subscribers.length
+        ? '<div class="admin-card empty-state"><h2>No subscribers yet.</h2><p>Newsletter sign-ups will appear here.</p></div>'
+        : '<div class="table-card"><div class="data-table-wrap"><table class="data-table"><thead><tr><th>WhatsApp number</th><th>Source</th><th>Joined</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
           state.subscribers
-            .map(function (item) {
+            .map(function (s) {
               return (
                 '<tr><td><strong>' +
-                esc(item.phone) +
-                "</strong></td><td>" +
-                esc(item.source || "storefront") +
-                "</td><td>" +
-                date(item.createdAt) +
+                esc(s.phone) +
+                '</strong></td><td>' +
+                esc(s.source || "storefront") +
+                '</td><td>' +
+                date(s.createdAt) +
                 '</td><td><span class="status ' +
-                (item.active ? "" : "pending") +
+                (s.active ? "" : "pending") +
                 '">' +
-                (item.active ? "Active" : "Inactive") +
-                '</span></td><td><button class="icon-btn" data-subscriber-toggle="' +
-                esc(item._id || item.id) +
+                (s.active ? "Active" : "Paused") +
+                '</span></td><td><div class="actions"><button class="icon-btn" data-subscriber-toggle="' +
+                esc(s._id || s.id) +
                 '" data-active="' +
-                String(Boolean(item.active)) +
+                (s.active ? "false" : "true") +
                 '">' +
-                (item.active ? "Deactivate" : "Reactivate") +
-                "</button></td></tr>"
+                (s.active ? "Pause" : "Activate") +
+                '</button><button class="icon-btn" data-delete-subscriber="' +
+                esc(s._id || s.id) +
+                '">Delete</button></div></td></tr>'
               );
             })
             .join("") +
-          "</tbody></table></div>"
-        : '<div class="empty-state" style="padding:45px 20px"><h2>No subscribers yet</h2><p>New-drop sign-ups will appear here.</p></div>') +
-      "</div>"
+          "</tbody></table></div></div>")
     );
   }
   function analytics() {
     const days = viewDays(),
-      details = state.analytics || {},
       max = Math.max.apply(
         null,
         days
@@ -1478,24 +1610,29 @@
           })
           .concat([1]),
       ),
-      orderCount =
-        state.dashboard && state.dashboard.metrics
-          ? state.dashboard.metrics.orders
-          : state.orders.length;
+      report = state.analytics || {},
+      visitors = Number(report.totalVisitors ?? state.views.total ?? 0),
+      paidOrders = Number(
+        report.paidOrders ?? state.dashboard?.metrics?.paidOrders ?? 0,
+      ),
+      revenue = Number(report.revenue ?? state.dashboard?.metrics?.revenue ?? 0),
+      conversion = Number(
+        report.conversionRate ?? (visitors ? (paidOrders / visitors) * 100 : 0),
+      ),
+      topPaths = report.topPaths || [],
+      referrers = report.referrers || [];
     return (
-      '<div class="admin-heading"><div><h2>Website analytics</h2><p>Understand how many people are visiting the store.</p></div><span class="status">Tracking ' +
+      '<div class="admin-heading"><div><h2>Website & sales analytics</h2><p>See traffic, conversion and verified paid-order performance.</p></div><span class="status">Tracking ' +
       (state.settings.viewTracking ? "on" : "off") +
       '</span></div><div class="kpi-grid"><div class="kpi"><div class="kpi-top"><span>Unique visitors</span><span class="kpi-icon">↗</span></div><strong>' +
-      Number(state.views.total || 0).toLocaleString() +
-      '</strong><small>Selected reporting period</small></div><div class="kpi"><div class="kpi-top"><span>Today</span><span class="kpi-icon">•</span></div><strong>' +
-      (state.views.days[day()] || 0) +
-      '</strong><small>Unique visitors today</small></div><div class="kpi"><div class="kpi-top"><span>Page views</span><span class="kpi-icon">◇</span></div><strong>' +
-      Number(details.totalPageViews || 0).toLocaleString() +
-      '</strong><small>Selected reporting period</small></div><div class="kpi"><div class="kpi-top"><span>Order rate</span><span class="kpi-icon">%</span></div><strong>' +
-      (state.views.total
-        ? Math.round((orderCount / state.views.total) * 100)
-        : 0) +
-      '%</strong><small>Orders ÷ visitors</small></div></div><div class="admin-card"><div class="admin-card-head"><h3>Unique visitors over the last seven days</h3><span class="muted">Server-side analytics</span></div><div class="chart" style="height:330px">' +
+      visitors.toLocaleString() +
+      '</strong><small>Selected 30-day period</small></div><div class="kpi"><div class="kpi-top"><span>Paid orders</span><span class="kpi-icon">▤</span></div><strong>' +
+      paidOrders.toLocaleString() +
+      '</strong><small>Verified payments</small></div><div class="kpi"><div class="kpi-top"><span>Paid revenue</span><span class="kpi-icon">₦</span></div><strong>' +
+      money(revenue) +
+      '</strong><small>After promo discounts</small></div><div class="kpi"><div class="kpi-top"><span>Conversion</span><span class="kpi-icon">%</span></div><strong>' +
+      conversion.toFixed(2) +
+      '%</strong><small>Paid orders ÷ unique visitors</small></div></div><div class="admin-grid"><div class="admin-card"><div class="admin-card-head"><h3>Unique visitors • Last 7 days</h3><span class="muted">Privacy-preserving counts</span></div><div class="chart" style="height:330px">' +
       days
         .map(function (x) {
           return (
@@ -1509,53 +1646,51 @@
           );
         })
         .join("") +
-      '</div><p class="prototype-note">Visitor identities are stored as privacy-preserving hashes; raw identifiers and IP addresses are not retained.</p></div><div class="analytics-detail-grid"><section class="admin-card"><div class="admin-card-head"><h3>Most visited pages</h3><span class="muted">Visitors</span></div><div class="rank-list">' +
-      ((details.topPaths || []).length
-        ? details.topPaths
-            .map(function (item) {
-              return (
-                '<div><span>' +
-                esc(item._id || "/") +
-                "</span><strong>" +
-                Number(item.visitors || 0).toLocaleString() +
-                "</strong></div>"
-              );
+      '</div></div><div class="admin-card"><div class="admin-card-head"><h3>Sales summary</h3><span class="muted">Last 30 days</span></div><div class="metric-list"><div><span>All orders started</span><strong>' +
+      Number(report.totalOrders || 0).toLocaleString() +
+      '</strong></div><div><span>Average paid order</span><strong>' +
+      money(report.averageOrderValue || 0) +
+      '</strong></div><div><span>Promo discounts granted</span><strong>' +
+      money(report.discounts || 0) +
+      '</strong></div><div><span>Recorded page views</span><strong>' +
+      Number(report.pageViews || 0).toLocaleString() +
+      '</strong></div></div></div></div><div class="admin-grid" style="margin-top:14px"><div class="admin-card"><div class="admin-card-head"><h3>Top pages</h3><span class="muted">Visitor reach</span></div>' +
+      (topPaths.length
+        ? '<div class="metric-list">' +
+          topPaths
+            .map(function (x) {
+              return '<div><span>' + esc(x._id || "/") + '</span><strong>' + Number(x.visitors || 0).toLocaleString() + "</strong></div>";
             })
-            .join("")
+            .join("") +
+          "</div>"
         : '<p class="muted">No page data yet.</p>') +
-      '</div></section><section class="admin-card"><div class="admin-card-head"><h3>Top referrers</h3><span class="muted">Visitors</span></div><div class="rank-list">' +
-      ((details.referrers || []).length
-        ? details.referrers
-            .map(function (item) {
-              return (
-                '<div><span>' +
-                esc(item._id || "Direct") +
-                "</span><strong>" +
-                Number(item.visitors || 0).toLocaleString() +
-                "</strong></div>"
-              );
+      '</div><div class="admin-card"><div class="admin-card-head"><h3>Top referrers</h3><span class="muted">Traffic sources</span></div>' +
+      (referrers.length
+        ? '<div class="metric-list">' +
+          referrers
+            .map(function (x) {
+              return '<div><span>' + esc(x._id || "Direct") + '</span><strong>' + Number(x.visitors || 0).toLocaleString() + "</strong></div>";
             })
-            .join("")
-        : '<p class="muted">No external referrers yet.</p>') +
-      '</div></section><section class="admin-card"><div class="admin-card-head"><h3>Most viewed products</h3><span class="muted">Views</span></div><div class="rank-list">' +
-      ((details.topViewedProducts || []).length
-        ? details.topViewedProducts
-            .map(function (item) {
-              return (
-                '<div><span>' +
-                esc(item.name) +
-                "</span><strong>" +
-                Number(item.views || 0).toLocaleString() +
-                "</strong></div>"
-              );
-            })
-            .join("")
-        : '<p class="muted">No product views yet.</p>') +
-      "</div></section></div>"
+            .join("") +
+          "</div>"
+        : '<p class="muted">Most current visits are direct or have no referrer.</p>') +
+      '</div></div><p class="prototype-note">Visitor identifiers are hashed before storage; raw visitor IDs and IP addresses are not retained in analytics records.</p>'
     );
   }
   function settings() {
-    return `<div class="admin-heading"><div><h2>Store settings</h2><p>Manage customer contact, social links, notifications and account security.</p></div></div><form id="settings-form"><div class="settings-grid"><section class="settings-card"><h3>Store profile</h3><p>Customer-facing store details.</p><div class="field"><label>Store name</label><input name="storeName" required value="${esc(state.settings.storeName)}"></div><div class="field"><label>Customer phone</label><input name="phone" required value="${esc(state.settings.phone)}"></div><div class="field"><label>WhatsApp URL</label><input name="whatsappUrl" type="url" required value="${esc(state.settings.whatsappUrl || defaults.whatsappUrl)}"></div></section><section class="settings-card"><h3>Social channels</h3><p>Links shown on the contact page and footer.</p><div class="field"><label>Instagram URL</label><input name="instagramUrl" type="url" required value="${esc(state.settings.instagramUrl || defaults.instagramUrl)}"></div><div class="field"><label>Instagram handle</label><input name="instagramHandle" required value="${esc(state.settings.instagramHandle || defaults.instagramHandle)}"></div><div class="field"><label>TikTok URL</label><input name="tiktokUrl" type="url" required value="${esc(state.settings.tiktokUrl || defaults.tiktokUrl)}"></div><div class="field"><label>TikTok handle</label><input name="tiktokHandle" required value="${esc(state.settings.tiktokHandle || defaults.tiktokHandle)}"></div></section><section class="settings-card"><h3>Order email notifications</h3><p>Set the inbox that receives verified paid-order alerts.</p><div class="field"><label>Notification email</label><input name="notificationEmail" type="email" value="${esc(state.settings.notificationEmail)}" placeholder="orders@yourdomain.com"><small>SMTP credentials must also be configured on the server.</small></div><div class="toggle-row"><div><strong>New-order alerts</strong><span>Email the owner after confirmed payment</span></div><button type="button" aria-label="Toggle new-order alerts" class="toggle ${state.settings.orderAlerts ? "on" : ""}" data-toggle-setting="orderAlerts"></button></div><div class="toggle-row"><div><strong>Website view tracking</strong><span>Measure unique visitors and page views</span></div><button type="button" aria-label="Toggle website analytics" class="toggle ${state.settings.viewTracking ? "on" : ""}" data-toggle-setting="viewTracking"></button></div></section></div><button class="btn btn-acid" style="margin-top:18px">Save store settings</button></form><form class="settings-card account-security" id="password-form"><h3>Administrator password</h3><p>Use at least 12 characters. Updating it signs out every other admin session.</p><div class="field-grid"><div class="field"><label>Current password</label><input name="currentPassword" type="password" autocomplete="current-password" required minlength="8"></div><div class="field"><label>New password</label><input name="newPassword" type="password" autocomplete="new-password" required minlength="12"></div></div><button class="btn btn-outline" style="margin-top:18px">Update password</button></form>`;
+    return (
+      '<div class="admin-heading"><div><h2>Store settings</h2><p>Manage customer contact, notifications and administrator security.</p></div></div><form id="settings-form"><div class="settings-grid"><section class="settings-card"><h3>Store profile</h3><p>Basic customer-facing details.</p><div class="field"><label>Store name</label><input name="storeName" value="' +
+      esc(state.settings.storeName) +
+      '"></div><div class="field"><label>Customer phone</label><input name="phone" value="' +
+      esc(state.settings.phone) +
+      '"></div></section><section class="settings-card"><h3>Order email notifications</h3><p>Set the inbox that receives paid-order alerts.</p><div class="field"><label>Notification email</label><input name="notificationEmail" type="email" value="' +
+      esc(state.settings.notificationEmail) +
+      '" placeholder="orders@yourdomain.com"><small>SMTP credentials must also be configured on the server.</small></div><div class="toggle-row"><div><strong>New-order alerts</strong><span>Email the owner after confirmed payment</span></div><button type="button" class="toggle ' +
+      (state.settings.orderAlerts ? "on" : "") +
+      '" data-toggle-setting="orderAlerts"></button></div><div class="toggle-row"><div><strong>Website view tracking</strong><span>Measure unique visitors and page views</span></div><button type="button" class="toggle ' +
+      (state.settings.viewTracking ? "on" : "") +
+      '" data-toggle-setting="viewTracking"></button></div></section></div><button class="btn btn-acid" style="margin-top:18px">Save settings</button></form><form id="password-form" class="settings-card password-card" style="margin-top:22px"><h3>Administrator password</h3><p>Use at least 12 characters for the live store.</p><div class="field-grid"><div class="field"><label>Current password</label><input name="currentPassword" type="password" autocomplete="current-password" required></div><div class="field"><label>New password</label><input name="newPassword" type="password" autocomplete="new-password" minlength="12" required></div></div><button class="btn btn-outline" style="margin-top:18px">Update password</button></form>'
+    );
   }
   function admin() {
     const authenticated = runtime.api
@@ -1567,7 +1702,7 @@
         catalogue: "Catalogue",
         orders: "Orders",
         promotions: "Promotions",
-        messages: "Customer inbox",
+        messages: "Messages",
         subscribers: "Subscribers",
         analytics: "Analytics",
         settings: "Settings",
@@ -1593,12 +1728,10 @@
       '<div class="admin-shell">' +
       sidebar() +
       '<div class="admin-main"><header class="admin-topbar"><h1>' +
-      title[state.adminTab] +
+      (title[state.adminTab] || "Overview") +
       '</h1><div class="admin-user"><span class="avatar">JK</span><div><strong>' +
       esc(state.admin?.name || "Store Admin") +
-      '</strong><span>' +
-      esc(state.admin?.email || "Jones Kicks") +
-      "</span></div></div></header><main class=\"admin-content\">" +
+      '</strong><span>Jones Kicks</span></div></div></header><main class="admin-content">' +
       content +
       "</main></div></div>"
     );
@@ -1648,11 +1781,8 @@
     } else if (path === "/cart") {
       app.innerHTML = cart();
       document.title = "Shopping Bag • Jones Kicks";
-    } else if (path === "/wishlist") {
-      app.innerHTML = wishlist();
-      document.title = "Saved Sneakers • Jones Kicks";
     } else if (path === "/checkout") {
-      app.innerHTML = checkout(u);
+      app.innerHTML = checkout();
       document.title = "Checkout • Jones Kicks";
     } else if (path === "/order-success") {
       const paidReference = u.searchParams.get("order");
@@ -1681,6 +1811,12 @@
     } else if (path === "/contact") {
       app.innerHTML = contact();
       document.title = "Contact • Jones Kicks";
+    } else if (path === "/wishlist") {
+      app.innerHTML = wishlist();
+      document.title = "Saved Favourites • Jones Kicks";
+    } else if (path === "/track-order") {
+      app.innerHTML = trackOrder();
+      document.title = "Track Order • Jones Kicks";
     } else {
       app.innerHTML = notFound();
       document.title = "Not found • Jones Kicks";
@@ -1776,20 +1912,8 @@
         esc(p.description) +
         "</p><p><strong>Delivery fee: " +
         money(p.deliveryFee || 0) +
-        ' per pair</strong></p><div class="size-label"><span>Choose size</span><span>EU 40–45</span></div><div class="size-grid">' +
-        p.sizes
-          .map(function (s) {
-            return (
-              '<button class="size-btn" data-size="' +
-              s +
-              '" ' +
-              (p.stock < 1 ? "disabled" : "") +
-              ">" +
-              s +
-              "</button>"
-            );
-          })
-          .join("") +
+        ' per pair</strong></p><div class="size-label"><span>Choose size</span><span>Sold-out sizes cannot be selected</span></div><div class="size-grid">' +
+        sizeButtons(p) +
         '</div><button class="btn btn-acid btn-block" data-add="' +
         esc(p.id) +
         '" disabled>Add to bag</button><a style="margin-top:14px;text-align:center;font-size:9px;font-weight:800" href="' +
@@ -1803,19 +1927,17 @@
     const p = product(id);
     if (!p || !state.size)
       return toast("Choose your preferred size first.", "!");
-    if (p.stock < 1) return toast("This sneaker is currently sold out.", "!");
+    const available = stockForSize(p, state.size);
+    if (available < 1)
+      return toast("This sneaker is sold out in size " + state.size + ".", "!");
     const x = state.cart.find(function (i) {
       return i.productId === id && i.size === state.size;
     });
-    if (x && x.qty >= 10) {
-      return toast("A maximum of 10 pairs is allowed per size.", "!");
-    }
-    if (cartProductQuantity(id) >= p.stock) {
-      return toast(`Only ${p.stock} pair(s) are currently available.`, "!");
-    }
+    if (x && x.qty >= Math.min(available, 10))
+      return toast("You have reached the available quantity for this pair.", "!");
     if (x) x.qty++;
     else state.cart.push({ productId: id, size: state.size, qty: 1 });
-    invalidateQuote();
+    clearQuote();
     save(K.cart, state.cart);
     close();
     header(url().pathname);
@@ -1829,24 +1951,21 @@
       });
     if (!item) return;
     const p = product(item.productId);
-    if (dir === "up" && item.qty >= 10) {
-      toast("A maximum of 10 pairs is allowed per size.", "!");
-      return;
-    }
     if (
       dir === "up" &&
       p &&
-      cartProductQuantity(item.productId) >= Number(p.stock || 0)
-    ) {
-      toast(`Only ${p.stock} pair(s) are currently available.`, "!");
-      return;
-    }
+      item.qty >= Math.min(stockForSize(p, item.size), 10)
+    )
+      return toast(
+        "No more stock is available in size " + item.size + ".",
+        "!",
+      );
     item.qty += dir === "up" ? 1 : -1;
     if (item.qty <= 0)
       state.cart = state.cart.filter(function (i) {
         return i !== item;
       });
-    invalidateQuote();
+    clearQuote();
     save(K.cart, state.cart);
     if (document.getElementById("cart-drawer").classList.contains("open")) {
       drawer();
@@ -1858,7 +1977,7 @@
     state.cart = state.cart.filter(function (i) {
       return !(i.productId === x[0] && i.size === Number(x[1]));
     });
-    invalidateQuote();
+    clearQuote();
     save(K.cart, state.cart);
     toast("Item removed from your bag.", "✓");
     if (document.getElementById("cart-drawer").classList.contains("open")) {
@@ -1881,98 +2000,94 @@
       "♥",
     );
   }
-  async function applyPromotion(button) {
-    if (state.promoBusy) return;
-    const input = button.closest(".promo")?.querySelector("input"),
-      code = String(input?.value || "")
+  function snapshotForm(id) {
+    const form = document.getElementById(id);
+    if (!form) return null;
+    const values = {};
+    Array.from(form.elements).forEach(function (field) {
+      if (!field.name) return;
+      if (field.type === "radio" || field.type === "checkbox") {
+        if (field.checked) values[field.name] = field.value;
+      } else values[field.name] = field.value;
+    });
+    return values;
+  }
+  function restoreForm(id, values) {
+    const form = document.getElementById(id);
+    if (!form || !values) return;
+    Array.from(form.elements).forEach(function (field) {
+      if (!field.name || values[field.name] == null) return;
+      if (field.type === "radio" || field.type === "checkbox")
+        field.checked = field.value === values[field.name];
+      else field.value = values[field.name];
+    });
+  }
+  async function applyPromo(remove) {
+    const savedCheckout = snapshotForm("checkout-form");
+    if (remove) {
+      clearQuote();
+      render();
+      restoreForm("checkout-form", savedCheckout);
+      toast("Promo code removed.", "✓");
+      return;
+    }
+    const field = document.getElementById("promo-code"),
+      code = String(field ? field.value : "")
         .trim()
         .toUpperCase();
     if (!code) return toast("Enter a promo code first.", "!");
-    if (!runtime.api) {
+    if (!runtime.api)
       return toast("Promo codes are available on the live store.", "i");
-    }
-    state.promoBusy = true;
-    button.disabled = true;
-    button.textContent = "Checking…";
     try {
       const quote = await api("/api/orders/quote", {
         method: "POST",
-        body: { items: state.cart, promotionCode: code },
+        body: { items: state.cart, promoCode: code },
       });
-      state.quote = Object.assign({}, quote, { signature: cartSignature() });
+      state.quote = quote;
+      state.promo = { code: quote.promoCode || code };
       render();
-      toast(`${quote.promotion.code} applied successfully.`, "✓");
+      restoreForm("checkout-form", savedCheckout);
+      toast(
+        quote.discount
+          ? "Promo applied. You saved " + money(quote.discount) + "."
+          : "Promo code checked.",
+        "✓",
+      );
     } catch (error) {
-      invalidateQuote();
-      button.disabled = false;
-      button.textContent = "Apply";
       toast(error.message, "!");
-    } finally {
-      state.promoBusy = false;
     }
-  }
-  function removePromotion() {
-    invalidateQuote();
-    render();
-    toast("Promo code removed.", "✓");
   }
   async function payment(customer) {
-    if (state.checkoutBusy) return;
-    state.checkoutBusy = true;
-    const displayedQuote = {
-        subtotal: subtotal(),
-        discount: discount(),
-        deliveryFee: delivery(),
-        total: total(),
-      },
-      appliedCode = currentQuote()?.promotion?.code || "";
-    const submit = document.querySelector("[data-checkout-submit]");
-    if (submit) {
-      submit.disabled = true;
-      submit.textContent = "Preparing secure payment…";
-    }
-    state.pending = {
-      customer: customer,
-      total: total(),
-      items: JSON.parse(JSON.stringify(state.cart)),
-    };
+    if (state.paymentBusy) return;
     if (!runtime.api) {
-      modal(
-        '<div class="payment-modal"><div class="payment-brand"><a class="brand">' +
-          brand() +
-          '</a><span class="status pending">Static preview</span></div><div class="payment-amount"><span>Total to pay</span><strong>' +
-          money(total()) +
-          '</strong></div><p>No live charge occurs in the static preview.</p><button class="btn btn-acid btn-block" data-payment-success>Simulate successful payment</button><button class="btn btn-outline btn-block" data-layer-close style="margin-top:8px">Return to checkout</button></div>',
-        "payment-modal",
-      );
-      state.checkoutBusy = false;
+      toast("Secure checkout requires the Jones Kicks backend.", "!");
       return;
     }
+    if (!runtime.paymentConfigured) {
+      toast("Paystack checkout is not configured on this server.", "!");
+      return;
+    }
+
+    state.paymentBusy = true;
     modal(
       '<div class="payment-modal"><div class="payment-brand"><a class="brand">' +
         brand() +
-        '</a><span class="status pending">Secure checkout</span></div><div class="payment-amount"><span>Confirming total</span><strong>' +
-        money(total()) +
-        '</strong></div><div class="admin-loading compact"><span></span><p>Preparing your order securely…</p></div></div>',
+        '</a><span class="status pending">Secure Paystack checkout</span></div><div class="payment-amount"><span>Confirming total</span><strong>' +
+        money(grandTotal()) +
+        '</strong></div><div class="admin-loading compact"><span></span><p>Preparing your verified Paystack transaction…</p></div></div>',
       "payment-modal",
     );
     try {
-      const freshQuote = await api("/api/orders/quote", {
+      const verifiedQuote = await api("/api/orders/quote", {
         method: "POST",
-        body: { items: state.cart, promotionCode: appliedCode },
+        body: {
+          items: state.cart,
+          promoCode: state.promo?.code || "",
+        },
       });
-      state.quote = Object.assign({}, freshQuote, { signature: cartSignature() });
-      if (
-        ["subtotal", "discount", "deliveryFee", "total"].some(function (key) {
-          return Number(freshQuote[key] || 0) !== Number(displayedQuote[key] || 0);
-        })
-      ) {
-        state.pending = null;
-        state.checkoutBusy = false;
-        close();
-        render();
-        toast("Your order total changed. Review the updated amount before paying.", "!");
-        return;
+      state.quote = verifiedQuote;
+      if (verifiedQuote.promoCode) {
+        state.promo = { code: verifiedQuote.promoCode };
       }
       const payload = await api("/api/orders", {
         method: "POST",
@@ -1980,86 +2095,59 @@
           customer: customer,
           items: state.cart,
           paymentMethod: customer.payment,
-          promotionCode: freshQuote.promotion ? freshQuote.promotion.code : "",
+          promoCode: state.promo?.code || "",
         },
       });
+      if (
+        payload.payment?.mode !== "paystack" ||
+        !/^https:\/\//i.test(String(payload.payment?.authorizationUrl || ""))
+      ) {
+        throw new Error("Paystack did not return a secure checkout URL.");
+      }
       sessionStorage.setItem("jk_last_order", payload.order.reference);
       sessionStorage.setItem(K.orderToken, payload.orderToken);
-      if (payload.payment.mode === "paystack") {
-        window.location.assign(payload.payment.authorizationUrl);
-        return;
-      }
-      state.pending = {
-        order: payload.order,
-        demoToken: payload.payment.demoToken,
-        orderToken: payload.orderToken,
-      };
-      state.checkoutBusy = false;
-      modal(
-        '<div class="payment-modal"><div class="payment-brand"><a class="brand">' +
-          brand() +
-          '</a><span class="status pending">Development mode</span></div><div class="payment-amount"><span>Total to pay</span><strong>' +
-          money(payload.order.total) +
-          '</strong></div><p>The complete Paystack workflow is connected. This local environment uses its safe demo-payment switch.</p><button class="btn btn-acid btn-block" data-payment-success>Complete demo payment</button><button class="btn btn-outline btn-block" data-layer-close style="margin-top:8px">Return to checkout</button></div>',
-        "payment-modal",
-      );
+      window.location.assign(payload.payment.authorizationUrl);
     } catch (error) {
-      state.checkoutBusy = false;
+      state.paymentBusy = false;
       close();
       toast(error.message, "!");
     }
   }
-  async function complete() {
-    if (!state.pending) return;
-    if (runtime.api) {
-      try {
-        const payload = await api(
-          "/api/orders/" +
-            encodeURIComponent(state.pending.order.reference) +
-            "/demo-pay",
-          { method: "POST", body: { demoToken: state.pending.demoToken } },
-        );
-        state.orders.unshift(payload.order);
-        state.cart = [];
-        invalidateQuote();
-        save(K.cart, state.cart);
-        sessionStorage.setItem("jk_last_order", payload.order.reference);
-        sessionStorage.setItem(K.orderToken, payload.orderToken);
-        state.pending = null;
-        go(
-          "/order-success?order=" + encodeURIComponent(payload.order.reference),
-        );
-      } catch (error) {
-        toast(error.message, "!");
-      }
-      return;
-    }
-    const o = {
-      id:
-        "JK-" +
-        new Date().getFullYear().toString().slice(-2) +
-        String(Date.now()).slice(-6),
-      customer: state.pending.customer,
-      items: state.pending.items,
-      subtotal: subtotal(),
-      delivery: delivery(),
-      total: state.pending.total,
-      paymentMethod: state.pending.customer.payment,
-      paymentStatus: "Paid • UI demo",
-      status: "New",
-      createdAt: Date.now(),
-    };
-    state.orders.unshift(o);
-    state.cart = [];
-    invalidateQuote();
-    save(K.orders, state.orders);
-    save(K.cart, state.cart);
-    sessionStorage.setItem("jk_last_order", o.id);
-    state.pending = null;
-    go("/order-success?order=" + encodeURIComponent(o.id));
-  }
+
   function editProduct(id) {
     const p = id ? product(id) : null;
+    const currentInventory = p ? sizeInventoryFor(p) : [],
+      sizeEditor = [40, 41, 42, 43, 44, 45]
+        .map(function (size) {
+          const entry = currentInventory.find(function (item) {
+              return item.size === size;
+            }),
+            enabled = Boolean(entry);
+          return (
+            '<label class="size-inventory-row"><input class="size-enable" name="size_enabled_' +
+            size +
+            '" data-size-toggle="' +
+            size +
+            '" type="checkbox" ' +
+            (enabled ? "checked" : "") +
+            '><span class="size-inventory-number">EU ' +
+            size +
+            '</span><span class="size-inventory-status">' +
+            (enabled ? (entry.stock < 1 ? "Shown as sold out" : "Available") : "Hidden") +
+            '</span><input class="size-stock-input" name="size_stock_' +
+            size +
+            '" data-size-stock="' +
+            size +
+            '" type="number" min="0" max="100000" step="1" inputmode="numeric" value="' +
+            esc(enabled ? entry.stock : 0) +
+            '" aria-label="Stock for EU size ' +
+            size +
+            '" ' +
+            (enabled ? "required" : "disabled") +
+            '><span class="size-inventory-unit">pairs</span></label>'
+          );
+        })
+        .join("");
     state.upload = "";
     modal(
       '<form class="admin-modal" id="product-form"><h2>' +
@@ -2078,21 +2166,31 @@
         esc(p ? p.comparePrice : "") +
         '"></div><div class="field"><label>Delivery fee per pair (₦)</label><input name="deliveryFee" type="number" min="0" step="1" required value="' +
         esc(p ? p.deliveryFee : 0) +
-        '"><small>This exact fee follows the product into cart, checkout and the order.</small></div><div class="field"><label>Stock quantity</label><input name="stock" type="number" min="0" required value="' +
-        esc(p ? p.stock : 1) +
-        '"></div><div class="field full"><label class="check-row"><input name="featured" type="checkbox" ' +
-        (!p || p.featured ? "checked" : "") +
-        '><span><strong>Feature this sneaker</strong><small>Show it in the homepage collection.</small></span></label></div><div class="field full"><label>Image URL</label><input name="image" value="' +
+        '"><small>This exact fee follows the product into cart, checkout and the order.</small></div><div class="field full"><label>Available sizes and stock</label><div class="size-inventory-editor">' +
+        sizeEditor +
+        '</div><small>Check every size you offer. Enter 0 to keep a size visible as sold out; uncheck it to remove it from the storefront.</small></div><div class="field full"><label>Image URL</label><input name="image" value="' +
         esc(p ? p.image : "") +
         '"></div><div class="field full"><label>Or upload product image</label><input id="product-image-upload" type="file" accept="image/png,image/jpeg,image/webp"><small>JPG, PNG or WebP; maximum 1.5 MB.</small></div><div class="field full"><label>Description</label><textarea name="description" required>' +
         esc(p ? p.description : "") +
-        '</textarea></div></div><div class="modal-actions"><button type="button" class="btn btn-outline" data-layer-close>Cancel</button><button class="btn btn-acid">Save sneaker</button></div></form>',
+        '</textarea></div><div class="field full"><label class="check-row"><input name="featured" type="checkbox" ' +
+        (!p || p.featured ? "checked" : "") +
+        '> <span>Feature this sneaker in priority storefront listings</span></label></div></div><div class="modal-actions"><button type="button" class="btn btn-outline" data-layer-close>Cancel</button><button class="btn btn-acid">Save sneaker</button></div></form>',
       "admin-modal",
     );
   }
   async function saveProduct(form) {
     const d = new FormData(form),
       old = product(String(d.get("id"))),
+      sizeInventory = [40, 41, 42, 43, 44, 45]
+        .filter(function (size) {
+          return d.get("size_enabled_" + size) === "on";
+        })
+        .map(function (size) {
+          return {
+            size: size,
+            stock: Number(d.get("size_stock_" + size)),
+          };
+        }),
       payload = {
         name: String(d.get("name")).trim(),
         category: String(d.get("category")).trim(),
@@ -2100,12 +2198,40 @@
         price: Number(d.get("price")),
         comparePrice: Number(d.get("comparePrice")) || Number(d.get("price")),
         deliveryFee: Number(d.get("deliveryFee")),
-        stock: Number(d.get("stock")),
+        sizeInventory: sizeInventory,
         image: String(d.get("image") || (old && old.image) || fallback[0]),
         imageData: state.upload,
         description: String(d.get("description")).trim(),
         featured: d.get("featured") === "on",
       };
+    if (!sizeInventory.length) {
+      toast("Choose at least one sneaker size.", "!");
+      return;
+    }
+    if (
+      sizeInventory.some(function (entry) {
+        return !Number.isInteger(entry.stock) || entry.stock < 0 || entry.stock > 100000;
+      })
+    ) {
+      toast("Enter a valid whole-number stock quantity for every selected size.", "!");
+      return;
+    }
+    if (
+      sizeInventory.reduce(function (total, entry) {
+        return total + entry.stock;
+      }, 0) > 100000
+    ) {
+      toast("Total stock cannot exceed 100,000 pairs.", "!");
+      return;
+    }
+    if (form.dataset.saving === "true") return;
+    const submitButton = form.querySelector('button[type="submit"], button:not([type])'),
+      submitLabel = submitButton ? submitButton.textContent : "";
+    form.dataset.saving = "true";
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = old ? "Saving changes…" : "Adding sneaker…";
+    }
     if (runtime.api) {
       try {
         const result = await api(
@@ -2122,6 +2248,12 @@
         renderAdmin();
       } catch (error) {
         toast(error.message, "!");
+      } finally {
+        form.dataset.saving = "false";
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = submitLabel;
+        }
       }
       return;
     }
@@ -2131,7 +2263,12 @@
         fallback: old
           ? old.fallback
           : fallback[state.products.length % fallback.length],
-        sizes: [40, 41, 42, 43, 44, 45],
+        sizes: sizeInventory.map(function (entry) {
+          return entry.size;
+        }),
+        stock: sizeInventory.reduce(function (total, entry) {
+          return total + entry.stock;
+        }, 0),
         featured: old ? old.featured : true,
         active: true,
         createdAt: old ? old.createdAt : Date.now(),
@@ -2146,6 +2283,11 @@
       close();
       toast(old ? "Sneaker updated." : "New sneaker added.", "✓");
       renderAdmin();
+    }
+    form.dataset.saving = "false";
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = submitLabel;
     }
   }
   function askDelete(id) {
@@ -2174,108 +2316,243 @@
     state.products = state.products.filter(function (p) {
       return p.id !== id;
     });
-    state.wish = state.wish.filter(function (productId) {
-      return productId !== id;
-    });
     state.cart = state.cart.filter(function (x) {
       return x.productId !== id;
     });
     save(K.products, state.products);
     save(K.cart, state.cart);
-    save(K.wish, state.wish);
     close();
     renderAdmin();
     toast("Sneaker removed.", "✓");
+  }
+  function editCoupon(id) {
+    const c = id
+      ? state.coupons.find(function (item) {
+          return String(item._id || item.id) === String(id);
+        })
+      : null;
+    const localDate = function (value) {
+      if (!value) return "";
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return "";
+      const offset = d.getTimezoneOffset() * 60000;
+      return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+    };
+    modal(
+      '<form class="admin-modal" id="coupon-form"><h2>' +
+        (c ? "Edit promo code" : "Create promo code") +
+        '</h2><input type="hidden" name="id" value="' +
+        esc(c ? c._id || c.id : "") +
+        '"><div class="field-grid"><div class="field"><label>Promo code</label><input name="code" maxlength="32" required value="' +
+        esc(c ? c.code : "") +
+        '" placeholder="WELCOME10"></div><div class="field"><label>Discount type</label><select name="type"><option value="percentage" ' +
+        (!c || c.type === "percentage" ? "selected" : "") +
+        '>Percentage</option><option value="fixed" ' +
+        (c && c.type === "fixed" ? "selected" : "") +
+        '>Fixed amount</option></select></div><div class="field"><label>Discount value</label><input name="value" type="number" min="1" step="1" required value="' +
+        esc(c ? c.value : 10) +
+        '"></div><div class="field"><label>Minimum product subtotal (₦)</label><input name="minSubtotal" type="number" min="0" step="1" value="' +
+        esc(c ? c.minSubtotal || 0 : 0) +
+        '"></div><div class="field"><label>Maximum discount (₦)</label><input name="maxDiscount" type="number" min="0" step="1" value="' +
+        esc(c ? c.maxDiscount || 0 : 0) +
+        '"><small>Use 0 for no cap.</small></div><div class="field"><label>Usage limit</label><input name="usageLimit" type="number" min="0" step="1" value="' +
+        esc(c ? c.usageLimit || 0 : 0) +
+        '"><small>Use 0 for unlimited.</small></div><div class="field"><label>Starts at</label><input name="startsAt" type="datetime-local" value="' +
+        esc(localDate(c && c.startsAt)) +
+        '"></div><div class="field"><label>Ends at</label><input name="endsAt" type="datetime-local" value="' +
+        esc(localDate(c && c.endsAt)) +
+        '"></div><div class="field full"><label>Description</label><input name="description" maxlength="180" value="' +
+        esc(c ? c.description || "" : "") +
+        '" placeholder="Private drop discount"></div><div class="field full"><label class="check-row"><input name="active" type="checkbox" ' +
+        (!c || c.active ? "checked" : "") +
+        '> <span>Promo code is active</span></label></div></div><div class="modal-actions"><button type="button" class="btn btn-outline" data-layer-close>Cancel</button><button class="btn btn-acid">Save promo</button></div></form>',
+      "admin-modal",
+    );
+  }
+  async function saveCoupon(form) {
+    const d = new FormData(form),
+      id = String(d.get("id") || ""),
+      payload = {
+        code: String(d.get("code") || "").trim(),
+        type: String(d.get("type") || "percentage"),
+        value: Number(d.get("value")),
+        minSubtotal: Number(d.get("minSubtotal") || 0),
+        maxDiscount: Number(d.get("maxDiscount") || 0),
+        usageLimit: Number(d.get("usageLimit") || 0),
+        startsAt: String(d.get("startsAt") || ""),
+        endsAt: String(d.get("endsAt") || ""),
+        description: String(d.get("description") || "").trim(),
+        active: d.get("active") === "on",
+      };
+    if (!runtime.api)
+      return toast("Promo management requires the live backend.", "i");
+    try {
+      const result = await api(
+        id
+          ? "/api/admin/coupons/" + encodeURIComponent(id)
+          : "/api/admin/coupons",
+        { method: id ? "PATCH" : "POST", body: payload },
+      );
+      const saved = result.coupon;
+      const index = state.coupons.findIndex(function (c) {
+        return String(c._id || c.id) === String(saved._id || saved.id);
+      });
+      if (index >= 0) state.coupons[index] = saved;
+      else state.coupons.unshift(saved);
+      close();
+      renderAdmin();
+      toast(id ? "Promo code updated." : "Promo code created.", "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  async function disableCoupon(id) {
+    if (!runtime.api) return;
+    try {
+      await api("/api/admin/coupons/" + encodeURIComponent(id), {
+        method: "DELETE",
+      });
+      const c = state.coupons.find(function (item) {
+        return String(item._id || item.id) === String(id);
+      });
+      if (c) c.active = false;
+      renderAdmin();
+      toast("Promo code disabled.", "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  async function updateMessageStatus(id, status) {
+    if (!runtime.api) return;
+    try {
+      const result = await api(
+        "/api/admin/messages/" + encodeURIComponent(id) + "/status",
+        { method: "PATCH", body: { status: status } },
+      );
+      const index = state.messages.findIndex(function (m) {
+        return String(m._id || m.id) === String(id);
+      });
+      if (index >= 0) state.messages[index] = result.message;
+      renderAdmin();
+      toast("Message marked " + status.toLowerCase() + ".", "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  async function deleteMessage(id) {
+    if (!runtime.api) return;
+    try {
+      await api("/api/admin/messages/" + encodeURIComponent(id), {
+        method: "DELETE",
+      });
+      state.messages = state.messages.filter(function (m) {
+        return String(m._id || m.id) !== String(id);
+      });
+      renderAdmin();
+      toast("Message deleted.", "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  async function toggleSubscriber(id, active) {
+    if (!runtime.api) return;
+    try {
+      const result = await api(
+        "/api/admin/subscribers/" + encodeURIComponent(id),
+        { method: "PATCH", body: { active: active } },
+      );
+      const index = state.subscribers.findIndex(function (s) {
+        return String(s._id || s.id) === String(id);
+      });
+      if (index >= 0) state.subscribers[index] = result.subscriber;
+      renderAdmin();
+      toast(active ? "Subscriber activated." : "Subscriber paused.", "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  async function deleteSubscriber(id) {
+    if (!runtime.api) return;
+    try {
+      await api("/api/admin/subscribers/" + encodeURIComponent(id), {
+        method: "DELETE",
+      });
+      state.subscribers = state.subscribers.filter(function (s) {
+        return String(s._id || s.id) !== String(id);
+      });
+      renderAdmin();
+      toast("Subscriber deleted.", "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
+  function allowedOrderStatusOptions(o) {
+    const current = String(o.status || ""),
+      paid = String(o.paymentStatus || "").toLowerCase() === "paid";
+    if (current === "Completed" || current === "Cancelled") return [current];
+    if (!paid) return [current, "Cancelled"].filter(function (value, index, list) {
+      return value && list.indexOf(value) === index;
+    });
+    const transitions = {
+      New: ["New", "Confirmed", "Processing", "Cancelled", "Needs review"],
+      Confirmed: ["Confirmed", "Processing", "Cancelled", "Needs review"],
+      Processing: ["Processing", "Dispatched", "Cancelled", "Needs review"],
+      Dispatched: ["Dispatched", "Completed", "Needs review"],
+    };
+    if (current === "Needs review") {
+      const history = Array.isArray(o.statusHistory) ? o.statusHistory : [];
+      let previous = "";
+      for (let index = history.length - 2; index >= 0; index -= 1) {
+        const candidate = String(history[index]?.status || "");
+        if (
+          candidate &&
+          !["Awaiting payment", "Needs review", "Cancelled", "Completed"].includes(candidate)
+        ) {
+          previous = candidate;
+          break;
+        }
+      }
+      return ["Needs review", previous || "New", "Cancelled"];
+    }
+    return transitions[current] || [current, "Needs review", "Cancelled"];
   }
   function openOrder(id) {
     const o = state.orders.find(function (x) {
       return x.id === id;
     });
     if (!o) return;
-    const paid = o.paymentStatus === "paid",
-      locked = o.status === "Cancelled",
-      canSendStatus =
-        paid &&
-        [
-          "Confirmed",
-          "Processing",
-          "Dispatched",
-          "Completed",
-          "Cancelled",
-          "Needs review",
-        ].includes(o.status),
-      statuses = paid
-        ? o.status === "Needs review"
-          ? ["Needs review", "Confirmed", "Cancelled"]
-          : [
-              "New",
-              "Confirmed",
-              "Processing",
-              "Dispatched",
-              "Completed",
-              "Cancelled",
-              "Needs review",
-            ]
-        : ["Awaiting payment", "Cancelled", "Needs review"],
-      statusOptions = statuses
-        .map(function (status) {
-          return (
-            '<option value="' +
-            esc(status) +
-            '" ' +
-            (o.status === status ? "selected" : "") +
-            ">" +
-            esc(status) +
-            "</option>"
-          );
-        })
-        .join(""),
-      history = (o.statusHistory || [])
-        .slice()
-        .reverse()
-        .map(function (entry) {
-          return (
-            '<div><span>' +
-            esc(entry.status) +
-            "</span><small>" +
-            date(entry.changedAt) +
-            "</small></div>"
-          );
-        })
-        .join("");
+    const customer = o.customer || {};
     modal(
-      '<div class="admin-modal"><h2>Order ' +
+      '<div class="admin-modal"><div class="admin-card-head"><div><p class="eyebrow">Fulfilment</p><h2 style="margin:0">Order ' +
         esc(o.id) +
-        '</h2><div class="field-grid"><div><p class="muted">Customer</p><strong>' +
-        esc(o.customer.fullName) +
-        '</strong><br><a href="mailto:' +
-        esc(o.customer.email || "") +
+        '</h2></div><span class="status ' +
+        (o.status === "New" ? "pending" : "") +
         '">' +
-        esc(o.customer.email || "") +
-        '</a><br><a href="tel:' +
-        esc(phoneHref(o.customer.phone)) +
-        '">' +
-        esc(o.customer.phone) +
-        "</a>" +
+        esc(o.status) +
+        '</span></div><div class="field-grid order-detail-grid"><div><p class="muted">Customer</p><strong>' +
+        esc(customer.fullName || "Customer") +
+        "</strong><br>" +
+        esc(customer.email || "") +
+        "<br>" +
+        esc(customer.phone || "") +
         '</div><div><p class="muted">Order total</p><strong>' +
         money(o.total) +
         "</strong><br>" +
         esc(o.paymentStatus) +
-        (o.discount
-          ? "<br>Discount: −" + money(o.discount) +
-            (o.promotionCode ? " (" + esc(o.promotionCode) + ")" : "")
+        (o.promoCode
+          ? '<br><span class="muted">Promo ' + esc(o.promoCode) + " • −" + money(o.discount || 0) + "</span>"
           : "") +
         '</div><div class="field full"><p class="muted">Delivery address</p><strong>' +
-        esc(o.customer.address) +
-        ", " +
-        esc(o.customer.city) +
-        ", " +
-        esc(o.customer.region) +
-        "</strong>" +
-        (o.customer.notes
-          ? '<p class="muted">Note: ' + esc(o.customer.notes) + "</p>"
+        esc(customer.address || "") +
+        (customer.city ? ", " + esc(customer.city) : "") +
+        (customer.region ? ", " + esc(customer.region) : "") +
+        '</strong></div>' +
+        (customer.notes
+          ? '<div class="field full"><p class="muted">Delivery note</p><div class="message-preview expanded">' +
+            esc(customer.notes) +
+            "</div></div>"
           : "") +
-        '</div></div><div class="mini-items" style="margin-top:24px">' +
+        '</div><div class="mini-items" style="margin-top:24px">' +
         o.items
           .map(function (x) {
             const p = product(x.productId) || {
@@ -2306,55 +2583,93 @@
             );
           })
           .join("") +
-        '</div><div class="order-admin-grid"><div class="field"><label>Order status</label><select id="order-status" ' +
-        (locked ? "disabled" : "") +
-        ">" +
-        statusOptions +
-        '</select><small>Paid-order cancellation returns committed stock. Process any customer refund separately in Paystack.</small></div><div><p class="muted">Receipt email</p><strong>' +
-        (o.notification?.sentAt ? "Sent " + date(o.notification.sentAt) : "Not sent") +
-        "</strong>" +
-        (o.notification?.lastError
-          ? '<p class="form-alert compact">' +
-            esc(o.notification.lastError) +
-            "</p>"
+        '</div><div class="receipt-summary admin-receipt"><div class="summary-line"><span>Products</span><strong>' +
+        money(o.subtotal || 0) +
+        '</strong></div><div class="summary-line"><span>Delivery</span><strong>' +
+        money(o.deliveryFee || o.delivery || 0) +
+        '</strong></div>' +
+        (Number(o.discount || 0)
+          ? '<div class="summary-line discount-line"><span>Discount</span><strong>−' +
+            money(o.discount) +
+            "</strong></div>"
           : "") +
-        '</div><div><p class="muted">Latest status email</p><strong>' +
-        (o.notification?.statusSentAt
-          ? "Sent " + date(o.notification.statusSentAt)
-          : canSendStatus
-            ? "Not sent"
-            : "Available after a status update") +
-        "</strong>" +
-        (o.notification?.statusLastError
-          ? '<p class="form-alert compact">' +
-            esc(o.notification.statusLastError) +
-            "</p>"
-          : "") +
-        "</div></div>" +
-        (history
-          ? '<div class="status-history"><p class="muted">Status history</p>' +
-            history +
-            "</div>"
-          : "") +
+        '<div class="summary-line total"><span>Total</span><strong>' +
+        money(o.total) +
+        '</strong></div></div>' +
+        orderTimeline(o) +
+        '<div class="field"><label>Order status</label><select id="order-status">' +
+        allowedOrderStatusOptions(o)
+          .map(function (status) {
+            return (
+              '<option value="' +
+              esc(status) +
+              '" ' +
+              (o.status === status ? "selected" : "") +
+              ">" +
+              esc(status) +
+              "</option>"
+            );
+          })
+          .join("") +
+        '</select><small>Only valid fulfilment transitions are shown. Unpaid orders cannot enter fulfilment. Cancelling a paid reserved order returns its committed stock automatically.</small></div>' +
+        (o.refund && o.refund.status
+          ? '<div class="field"><label>Refund</label><div class="message-preview expanded"><strong>' +
+            esc(o.refund.status) +
+            '</strong>' +
+            (o.refund.amount ? ' • ' + money(o.refund.amount) : '') +
+            (o.refund.reason ? '<br><span class="muted">' + esc(o.refund.reason) + '</span>' : '') +
+            '</div></div>'
+          : '') +
+        (o.status === "Cancelled" && String(o.paymentStatus || "").toLowerCase() === "paid" && !(o.refund && o.refund.status)
+          ? '<div class="field"><label for="refund-reason">Full refund reason</label><textarea id="refund-reason" rows="3" maxlength="300" placeholder="Reason shown in the refund record"></textarea><small>Refunds are submitted securely through Paystack. The payment is marked refunded only after Paystack reports a processed refund.</small></div>'
+          : '') +
         '<div class="modal-actions"><button class="btn btn-outline" data-layer-close>Close</button>' +
-        (paid
-          ? '<button class="btn btn-outline" data-resend-order="' +
-            esc(o.id) +
-            '">Resend receipt</button>'
-          : "") +
-        (canSendStatus
-          ? '<button class="btn btn-outline" data-resend-status="' +
-            esc(o.id) +
-            '">Resend status email</button>'
-          : "") +
-        (!locked
-          ? '<button class="btn btn-acid" data-save-order="' +
+        (o.status === "Cancelled" && String(o.paymentStatus || "").toLowerCase() === "paid" && !(o.refund && o.refund.status)
+          ? '<button class="btn btn-outline" data-refund-order="' + esc(o.id) + '">Issue full refund</button>'
+          : '') +
+        '<button class="btn btn-acid" data-save-order="' +
         esc(o.id) +
-            '">Save status</button>'
-          : "") +
-        "</div></div>",
+        '">Save status</button></div></div>',
       "admin-modal",
     );
+  }
+  async function refundOrder(id) {
+    const order = state.orders.find(function (x) {
+      return x.id === id;
+    });
+    if (!order || !runtime.api) return;
+    const reasonField = document.getElementById("refund-reason");
+    const reason = String(reasonField ? reasonField.value : "").trim();
+    if (reason.length < 3) {
+      toast("Enter a refund reason.", "!");
+      if (reasonField) reasonField.focus();
+      return;
+    }
+    if (
+      !window.confirm(
+        "Issue a full refund for " +
+          id +
+          "? This submits a financial refund request to Paystack.",
+      )
+    )
+      return;
+    try {
+      const result = await api(
+        "/api/admin/orders/" + encodeURIComponent(id) + "/refund",
+        { method: "POST", body: { reason: reason } },
+      );
+      state.orders[state.orders.indexOf(order)] = result.order;
+      close();
+      renderAdmin();
+      toast(
+        result.order.paymentStatus === "refunded"
+          ? "Refund processed."
+          : "Refund submitted to Paystack.",
+        "✓",
+      );
+    } catch (error) {
+      toast(error.message, "!");
+    }
   }
   async function saveOrderStatus(id, status) {
     const o = state.orders.find(function (x) {
@@ -2368,10 +2683,6 @@
           { method: "PATCH", body: { status: status } },
         );
         state.orders[state.orders.indexOf(o)] = result.order;
-        close();
-        await loadAdminTab("orders", state.orderPage);
-        toast("Order status updated.", "✓");
-        return;
       } catch (error) {
         toast(error.message, "!");
         return;
@@ -2384,244 +2695,22 @@
     renderAdmin();
     toast("Order status updated.", "✓");
   }
-  async function resendOrderEmail(id) {
-    if (!runtime.api) return toast("Email retry requires the live backend.", "i");
-    try {
-      const result = await api(
-        "/api/admin/orders/" + encodeURIComponent(id) + "/resend-notification",
-        { method: "POST" },
-      );
-      const existing = state.orders.find(function (item) {
-        return item.id === id;
-      });
-      if (existing) state.orders[state.orders.indexOf(existing)] = result.order;
-      close();
-      toast(result.message, "✓");
-    } catch (error) {
-      toast(error.message, "!");
-    }
+  async function loadOrders(page) {
+    if (!runtime.api) return;
+    const params = new URLSearchParams();
+    params.set("page", String(Math.max(1, Number(page || 1))));
+    if (state.orderSearch) params.set("search", state.orderSearch);
+    if (state.orderStatus) params.set("status", state.orderStatus);
+    if (state.orderPaymentStatus)
+      params.set("paymentStatus", state.orderPaymentStatus);
+    const data = await api("/api/admin/orders?" + params.toString());
+    state.orders = data.orders || [];
+    state.orderPage = Number(data.page || 1);
+    state.orderPages = Math.max(1, Number(data.pages || 1));
+    state.orderTotal = Number(data.total || 0);
   }
-  async function resendOrderStatusEmail(id) {
-    if (!runtime.api) return toast("Email retry requires the live backend.", "i");
-    try {
-      const result = await api(
-        "/api/admin/orders/" +
-          encodeURIComponent(id) +
-          "/resend-status-notification",
-        { method: "POST" },
-      );
-      const existing = state.orders.find(function (item) {
-        return item.id === id;
-      });
-      if (existing) state.orders[state.orders.indexOf(existing)] = result.order;
-      close();
-      toast(result.message, "✓");
-    } catch (error) {
-      toast(error.message, "!");
-    }
-  }
-  function dateTimeInput(value) {
-    if (!value) return "";
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return "";
-    const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000);
-    return local.toISOString().slice(0, 16);
-  }
-  function editPromotion(id) {
-    const p = id
-      ? state.promotions.find(function (item) {
-          return item.id === id;
-        })
-      : null;
-    modal(
-      '<form class="admin-modal" id="promotion-form"><h2>' +
-        (p ? "Edit promo code" : "Create promo code") +
-        '</h2><input type="hidden" name="id" value="' +
-        esc(p ? p.id : "") +
-        '"><div class="field-grid"><div class="field"><label>Promo code</label><input name="code" required minlength="3" maxlength="30" value="' +
-        esc(p ? p.code : "") +
-        '" placeholder="WELCOME10"></div><div class="field"><label>Discount type</label><select name="type"><option value="percentage" ' +
-        (!p || p.type === "percentage" ? "selected" : "") +
-        '>Percentage</option><option value="fixed" ' +
-        (p?.type === "fixed" ? "selected" : "") +
-        '>Fixed amount</option></select></div><div class="field"><label>Discount value</label><input name="value" type="number" min="1" step="1" required value="' +
-        esc(p ? p.value : 10) +
-        '"></div><div class="field"><label>Minimum product subtotal (₦)</label><input name="minimumSubtotal" type="number" min="0" step="1" value="' +
-        esc(p ? p.minimumSubtotal : 0) +
-        '"></div><div class="field"><label>Maximum discount (₦)</label><input name="maximumDiscount" type="number" min="0" step="1" value="' +
-        esc(p ? p.maximumDiscount : 0) +
-        '"><small>Use 0 for no maximum.</small></div><div class="field"><label>Usage limit</label><input name="usageLimit" type="number" min="0" step="1" value="' +
-        esc(p ? p.usageLimit : 0) +
-        '"><small>Use 0 for unlimited.</small></div><div class="field"><label>Starts</label><input name="startsAt" type="datetime-local" value="' +
-        esc(p ? dateTimeInput(p.startsAt) : "") +
-        '"></div><div class="field"><label>Ends</label><input name="endsAt" type="datetime-local" value="' +
-        esc(p ? dateTimeInput(p.endsAt) : "") +
-        '"></div><div class="field full"><label class="check-row"><input name="active" type="checkbox" ' +
-        (!p || p.active ? "checked" : "") +
-        '><span><strong>Active promo code</strong><small>Customers can apply it while its dates and limits are valid.</small></span></label></div></div><div class="modal-actions"><button type="button" class="btn btn-outline" data-layer-close>Cancel</button><button class="btn btn-acid">Save promo code</button></div></form>',
-      "admin-modal",
-    );
-  }
-  async function savePromotion(form) {
-    const data = new FormData(form),
-      id = String(data.get("id") || ""),
-      existing = state.promotions.find(function (item) {
-        return item.id === id;
-      }),
-      payload = {
-        code: String(data.get("code") || "").toUpperCase(),
-        type: data.get("type"),
-        value: Number(data.get("value")),
-        minimumSubtotal: Number(data.get("minimumSubtotal") || 0),
-        maximumDiscount: Number(data.get("maximumDiscount") || 0),
-        usageLimit: Number(data.get("usageLimit") || 0),
-        startsAt: data.get("startsAt") || "",
-        endsAt: data.get("endsAt") || "",
-        active: data.get("active") === "on",
-      };
-    try {
-      const result = runtime.api
-        ? await api(
-            existing
-              ? "/api/admin/promotions/" + encodeURIComponent(existing.id)
-              : "/api/admin/promotions",
-            { method: existing ? "PATCH" : "POST", body: payload },
-          )
-        : {
-            promotion: Object.assign(
-              {
-                id: existing?.id || "promo-" + Date.now(),
-                usedCount: existing?.usedCount || 0,
-                createdAt: existing?.createdAt || new Date().toISOString(),
-              },
-              payload,
-            ),
-          };
-      if (existing) state.promotions[state.promotions.indexOf(existing)] = result.promotion;
-      else state.promotions.unshift(result.promotion);
-      close();
-      renderAdmin();
-      toast(existing ? "Promo code updated." : "Promo code created.", "✓");
-    } catch (error) {
-      toast(error.message, "!");
-    }
-  }
-  function askDeletePromotion(id) {
-    const p = state.promotions.find(function (item) {
-      return item.id === id;
-    });
-    if (!p) return;
-    modal(
-      '<div class="admin-modal"><h2>Deactivate promo code?</h2><p class="muted">Customers will no longer be able to apply <strong>' +
-        esc(p.code) +
-        '</strong>.</p><div class="modal-actions"><button class="btn btn-outline" data-layer-close>Cancel</button><button class="btn btn-danger" data-confirm-promotion-delete="' +
-        esc(id) +
-        '">Deactivate</button></div></div>',
-      "admin-modal",
-    );
-  }
-  async function deletePromotion(id) {
-    try {
-      if (runtime.api) {
-        await api("/api/admin/promotions/" + encodeURIComponent(id), {
-          method: "DELETE",
-        });
-      }
-      const p = state.promotions.find(function (item) {
-        return item.id === id;
-      });
-      if (p) p.active = false;
-      close();
-      renderAdmin();
-      toast("Promo code deactivated.", "✓");
-    } catch (error) {
-      toast(error.message, "!");
-    }
-  }
-  function openMessage(id) {
-    const item = state.messages.find(function (message) {
-      return String(message._id || message.id) === id;
-    });
-    if (!item) return;
-    modal(
-      '<div class="admin-modal"><p class="eyebrow">Customer enquiry</p><h2>' +
-        esc(item.name) +
-        '</h2><p><a href="tel:' +
-        esc(phoneHref(item.phone)) +
-        '">' +
-        esc(item.phone) +
-        '</a> • ' +
-        date(item.createdAt) +
-        '</p><div class="message-full">' +
-        esc(item.message) +
-        '</div><div class="field"><label>Message status</label><select id="message-status"><option ' +
-        (item.status === "New" ? "selected" : "") +
-        '>New</option><option ' +
-        (item.status === "Read" ? "selected" : "") +
-        '>Read</option><option ' +
-        (item.status === "Closed" ? "selected" : "") +
-        '>Closed</option></select></div><div class="modal-actions"><button class="btn btn-outline" data-layer-close>Close</button><button class="btn btn-acid" data-save-message="' +
-        esc(id) +
-        '">Save status</button></div></div>',
-      "admin-modal",
-    );
-  }
-  async function saveMessageStatus(id, status) {
-    const item = state.messages.find(function (message) {
-      return String(message._id || message.id) === id;
-    });
-    if (!item) return;
-    try {
-      if (runtime.api) {
-        const result = await api(
-          "/api/admin/messages/" + encodeURIComponent(id) + "/status",
-          { method: "PATCH", body: { status: status } },
-        );
-        state.messages[state.messages.indexOf(item)] = result.message;
-      } else item.status = status;
-      close();
-      renderAdmin();
-      toast("Message status updated.", "✓");
-    } catch (error) {
-      toast(error.message, "!");
-    }
-  }
-  async function toggleSubscriber(id, active) {
-    const item = state.subscribers.find(function (subscriber) {
-      return String(subscriber._id || subscriber.id) === id;
-    });
-    if (!item) return;
-    try {
-      if (runtime.api) {
-        const result = await api(
-          "/api/admin/subscribers/" + encodeURIComponent(id),
-          { method: "PATCH", body: { active: active } },
-        );
-        state.subscribers[state.subscribers.indexOf(item)] = result.subscriber;
-      } else item.active = active;
-      renderAdmin();
-      toast(active ? "Subscriber reactivated." : "Subscriber deactivated.", "✓");
-    } catch (error) {
-      toast(error.message, "!");
-    }
-  }
-  async function changePassword(form) {
-    if (!runtime.api) return toast("Password changes require the live backend.", "i");
-    const data = Object.fromEntries(new FormData(form).entries());
-    try {
-      const result = await api("/api/admin/account/password", {
-        method: "POST",
-        body: data,
-      });
-      form.reset();
-      toast(result.message, "✓");
-    } catch (error) {
-      toast(error.message, "!");
-    }
-  }
-  async function loadAdminTab(tab, requestedPage) {
+  async function loadAdminTab(tab) {
     state.adminTab = tab;
-    if (tab === "orders" && requestedPage) state.orderPage = requestedPage;
     if (!runtime.api) {
       renderAdmin();
       return;
@@ -2641,23 +2730,16 @@
         const data = await api("/api/admin/products");
         state.products = data.products;
       } else if (tab === "orders") {
-        const params = new URLSearchParams({ page: String(state.orderPage) });
-        if (state.orderSearch) params.set("search", state.orderSearch);
-        if (state.orderStatus) params.set("status", state.orderStatus);
-        const data = await api("/api/admin/orders?" + params.toString());
-        state.orders = data.orders;
-        state.orderPage = data.page;
-        state.orderPages = Math.max(1, data.pages || 1);
-        state.orderTotal = data.total;
+        await loadOrders(state.orderPage);
       } else if (tab === "promotions") {
-        const data = await api("/api/admin/promotions");
-        state.promotions = data.promotions;
+        const data = await api("/api/admin/coupons");
+        state.coupons = data.coupons || [];
       } else if (tab === "messages") {
         const data = await api("/api/admin/messages");
-        state.messages = data.messages;
+        state.messages = data.messages || [];
       } else if (tab === "subscribers") {
         const data = await api("/api/admin/subscribers");
-        state.subscribers = data.subscribers;
+        state.subscribers = data.subscribers || [];
       } else if (tab === "analytics") {
         const data = await api("/api/admin/analytics?days=30");
         state.analytics = data;
@@ -2726,13 +2808,6 @@
       payload = {
         storeName: String(d.get("storeName") || "Jones Kicks"),
         phone: String(d.get("phone") || ""),
-        whatsappUrl: String(d.get("whatsappUrl") || defaults.whatsappUrl),
-        instagramUrl: String(d.get("instagramUrl") || defaults.instagramUrl),
-        instagramHandle: String(
-          d.get("instagramHandle") || defaults.instagramHandle,
-        ),
-        tiktokUrl: String(d.get("tiktokUrl") || defaults.tiktokUrl),
-        tiktokHandle: String(d.get("tiktokHandle") || defaults.tiktokHandle),
         notificationEmail: String(d.get("notificationEmail") || ""),
         orderAlerts: Boolean(state.settings.orderAlerts),
         viewTracking: Boolean(state.settings.viewTracking),
@@ -2790,6 +2865,50 @@
     form.reset();
     toast("You are on the static preview drop list.", "✓");
   }
+  async function lookupOrder(form) {
+    const data = Object.fromEntries(new FormData(form).entries());
+    if (!runtime.api) {
+      toast("Order tracking requires the live backend.", "i");
+      return;
+    }
+    try {
+      const result = await api("/api/orders/lookup", {
+        method: "POST",
+        body: data,
+      });
+      state.trackedOrder = result.order;
+      render();
+      toast("Order status loaded.", "✓");
+    } catch (error) {
+      state.trackedOrder = null;
+      toast(error.message, "!");
+    }
+  }
+  async function savePassword(form) {
+    if (!runtime.api) {
+      toast("Password changes require the live backend.", "i");
+      return;
+    }
+    const d = new FormData(form);
+    const payload = {
+      currentPassword: String(d.get("currentPassword") || ""),
+      newPassword: String(d.get("newPassword") || ""),
+    };
+    if (payload.newPassword.length < 12) {
+      toast("Use at least 12 characters for the new password.", "!");
+      return;
+    }
+    try {
+      const result = await api("/api/admin/account/password", {
+        method: "PATCH",
+        body: payload,
+      });
+      form.reset();
+      toast(result.message || "Administrator password updated.", "✓");
+    } catch (error) {
+      toast(error.message, "!");
+    }
+  }
   const loadingOrders = new Set();
   async function loadCustomerOrder(reference) {
     if (loadingOrders.has(reference)) return;
@@ -2797,9 +2916,12 @@
     if (!token) return;
     loadingOrders.add(reference);
     try {
-      const result = await api("/api/orders/" + encodeURIComponent(reference), {
-        headers: { "x-order-token": token },
-      });
+      const result = await api(
+        "/api/orders/" +
+          encodeURIComponent(reference) +
+          "?token=" +
+          encodeURIComponent(token),
+      );
       state.orders = state.orders.filter(function (order) {
         return order.id !== reference;
       });
@@ -2820,8 +2942,10 @@
       const session = await api("/api/session");
       runtime.csrfToken = session.csrfToken;
       runtime.adminAuthenticated = session.adminAuthenticated;
-      state.admin = session.admin;
-      runtime.paymentMode = session.paymentMode;
+      runtime.paymentConfigured = Boolean(session.paymentConfigured);
+      runtime.paymentEnvironment = session.paymentEnvironment || "unconfigured";
+      runtime.paystackPublicKey = String(session.paystackPublicKey || "");
+      state.admin = session.admin || null;
       state.settings = Object.assign(
         {},
         state.settings,
@@ -2909,10 +3033,22 @@
       render();
     } else if (t.matches("[data-qty]")) qty(t.dataset.line, t.dataset.qty);
     else if (t.matches("[data-remove]")) remove(t.dataset.remove);
-    else if (t.matches("[data-promo]")) void applyPromotion(t);
-    else if (t.matches("[data-remove-promo]")) removePromotion();
-    else if (t.matches("[data-payment-success]")) void complete();
-    else if (t.matches("[data-admin-tab]"))
+    else if (t.matches("[data-promo]")) void applyPromo(false);
+    else if (t.matches("[data-promo-remove]")) void applyPromo(true);
+    else if (t.matches("[data-order-page]") && !t.disabled) {
+      state.adminLoading = true;
+      renderAdmin();
+      void loadOrders(Number(t.dataset.orderPage))
+        .then(function () {
+          state.adminLoading = false;
+          renderAdmin();
+        })
+        .catch(function (error) {
+          state.adminLoading = false;
+          renderAdmin();
+          toast(error.message, "!");
+        });
+    } else if (t.matches("[data-admin-tab]"))
       void loadAdminTab(t.dataset.adminTab);
     else if (t.matches("[data-admin-logout]")) void logout();
     else if (t.matches("[data-new-product]")) editProduct();
@@ -2920,35 +3056,29 @@
       editProduct(t.dataset.editProduct);
     else if (t.matches("[data-delete-product]"))
       askDelete(t.dataset.deleteProduct);
+    else if (t.matches("[data-new-coupon]")) editCoupon();
+    else if (t.matches("[data-edit-coupon]")) editCoupon(t.dataset.editCoupon);
+    else if (t.matches("[data-delete-coupon]"))
+      void disableCoupon(t.dataset.deleteCoupon);
+    else if (t.matches("[data-message-status]"))
+      void updateMessageStatus(t.dataset.messageStatus, t.dataset.status);
+    else if (t.matches("[data-delete-message]"))
+      void deleteMessage(t.dataset.deleteMessage);
+    else if (t.matches("[data-subscriber-toggle]"))
+      void toggleSubscriber(
+        t.dataset.subscriberToggle,
+        t.dataset.active === "true",
+      );
+    else if (t.matches("[data-delete-subscriber]"))
+      void deleteSubscriber(t.dataset.deleteSubscriber);
     else if (t.matches("[data-confirm-delete]"))
       void del(t.dataset.confirmDelete);
     else if (t.matches("[data-order-view]")) openOrder(t.dataset.orderView);
-    else if (t.matches("[data-order-page]"))
-      void loadAdminTab("orders", Number(t.dataset.orderPage));
-    else if (t.matches("[data-resend-order]"))
-      void resendOrderEmail(t.dataset.resendOrder);
-    else if (t.matches("[data-resend-status]"))
-      void resendOrderStatusEmail(t.dataset.resendStatus);
+    else if (t.matches("[data-refund-order]"))
+      void refundOrder(t.dataset.refundOrder);
     else if (t.matches("[data-save-order]")) {
       const s = document.getElementById("order-status");
       if (s) void saveOrderStatus(t.dataset.saveOrder, s.value);
-    } else if (t.matches("[data-new-promotion]")) editPromotion();
-    else if (t.matches("[data-edit-promotion]"))
-      editPromotion(t.dataset.editPromotion);
-    else if (t.matches("[data-delete-promotion]"))
-      askDeletePromotion(t.dataset.deletePromotion);
-    else if (t.matches("[data-confirm-promotion-delete]"))
-      void deletePromotion(t.dataset.confirmPromotionDelete);
-    else if (t.matches("[data-message-view]"))
-      openMessage(t.dataset.messageView);
-    else if (t.matches("[data-save-message]")) {
-      const status = document.getElementById("message-status");
-      if (status) void saveMessageStatus(t.dataset.saveMessage, status.value);
-    } else if (t.matches("[data-subscriber-toggle]")) {
-      void toggleSubscriber(
-        t.dataset.subscriberToggle,
-        t.dataset.active !== "true",
-      );
     } else if (t.matches("[data-toggle-setting]")) {
       const k = t.dataset.toggleSetting;
       state.settings[k] = !state.settings[k];
@@ -2966,24 +3096,54 @@
       state.adminSearch = String(new FormData(f).get("query")).trim();
       renderAdmin();
     } else if (f.id === "admin-order-search") {
-      state.orderSearch = String(new FormData(f).get("query")).trim();
+      const d = new FormData(f);
+      state.orderSearch = String(d.get("search") || "").trim();
+      state.orderStatus = String(d.get("status") || "");
+      state.orderPaymentStatus = String(d.get("paymentStatus") || "");
       state.orderPage = 1;
-      if (runtime.api) void loadAdminTab("orders", 1);
-      else renderAdmin();
+      void loadAdminTab("orders");
     } else if (f.id === "newsletter-form") void subscribe(f);
     else if (f.id === "contact-form") void sendContact(f);
     else if (f.id === "checkout-form")
       void payment(Object.fromEntries(new FormData(f).entries()));
     else if (f.id === "admin-login") void login(f);
     else if (f.id === "product-form") void saveProduct(f);
-    else if (f.id === "promotion-form") void savePromotion(f);
+    else if (f.id === "coupon-form") void saveCoupon(f);
     else if (f.id === "settings-form") void saveSettings(f);
-    else if (f.id === "password-form") void changePassword(f);
+    else if (f.id === "password-form") void savePassword(f);
+    else if (f.id === "track-order-form") void lookupOrder(f);
   });
   document.addEventListener("change", function (e) {
     if (e.target.id === "sort-select") {
       state.sort = e.target.value;
       render();
+    }
+    if (e.target.matches("[data-size-toggle]")) {
+      const size = e.target.dataset.sizeToggle,
+        input = document.querySelector('[data-size-stock="' + size + '"]'),
+        status = e.target
+          .closest(".size-inventory-row")
+          ?.querySelector(".size-inventory-status");
+      if (input) {
+        input.disabled = !e.target.checked;
+        input.required = e.target.checked;
+        if (e.target.checked) input.focus();
+      }
+      if (status) {
+        status.textContent = e.target.checked
+          ? Number(input && input.value) > 0
+            ? "Available"
+            : "Shown as sold out"
+          : "Hidden";
+      }
+    }
+    if (e.target.matches("[data-size-stock]")) {
+      const row = e.target.closest(".size-inventory-row"),
+        status = row?.querySelector(".size-inventory-status"),
+        enabled = row?.querySelector("[data-size-toggle]")?.checked;
+      if (status && enabled) {
+        status.textContent = Number(e.target.value) > 0 ? "Available" : "Shown as sold out";
+      }
     }
     if (e.target.id === "product-image-upload") {
       const f = e.target.files && e.target.files[0];
@@ -2999,12 +3159,6 @@
         toast("Image ready to save.", "✓");
       };
       r.readAsDataURL(f);
-    }
-    if (e.target.id === "admin-order-status") {
-      state.orderStatus = e.target.value;
-      state.orderPage = 1;
-      if (runtime.api) void loadAdminTab("orders", 1);
-      else renderAdmin();
     }
   });
   document.getElementById("drawer-backdrop").addEventListener("click", close);
