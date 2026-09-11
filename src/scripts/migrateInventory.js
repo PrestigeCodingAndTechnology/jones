@@ -7,8 +7,8 @@ async function migrate() {
   const count = await migrateLegacyProductInventory();
   console.log(
     count
-      ? `Migrated ${count} product(s) to per-size inventory.`
-      : "All products already use per-size inventory.",
+      ? `Migrated ${count} legacy catalogue product(s).`
+      : "All products already use the current catalogue fields.",
   );
 }
 

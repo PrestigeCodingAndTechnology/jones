@@ -1,5 +1,3 @@
-import { env } from "../config/env.js";
-
 export function notFound(req, res) {
   res.status(404).json({ error: "The requested resource was not found." });
 }
@@ -36,6 +34,6 @@ export function errorHandler(error, req, res, _next) {
   res.status(status).json({
     error: message,
     ...(error.details ? { details: error.details } : {}),
-    ...(env.isProduction ? {} : { requestId: req.id }),
+    requestId: req.id,
   });
 }

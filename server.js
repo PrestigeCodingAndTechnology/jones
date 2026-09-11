@@ -12,7 +12,7 @@ async function start() {
   const migratedProducts = await migrateLegacyProductInventory();
   if (migratedProducts) {
     console.log(
-      `Migrated ${migratedProducts} legacy product(s) to per-size inventory.`,
+      `Migrated ${migratedProducts} legacy catalogue product(s).`,
     );
   }
   const app = createApp();

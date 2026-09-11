@@ -86,7 +86,7 @@ publicRouter.get(
           : req.query.sort === "new"
             ? { createdAt: -1 }
             : { featured: -1, createdAt: -1 };
-    const products = await Product.find(filter).sort(sort).limit(100).lean();
+    const products = await Product.find(filter).sort(sort).limit(500).lean();
     res.json({ products: products.map(publicProduct) });
   }),
 );

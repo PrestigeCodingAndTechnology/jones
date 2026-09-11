@@ -26,6 +26,10 @@ export function createApp() {
 
   app.use(requestContext);
   app.use(securityHeaders);
+  app.use("/api", (_req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    next();
+  });
 
   // Paystack requires the untouched request bytes for HMAC verification.
   app.use(
@@ -94,6 +98,7 @@ export function createApp() {
   app.use("/api", notFound);
 
   app.get("*splat", (req, res) => {
+    res.set("Cache-Control", "no-store");
     res.render("store", { apiEnabled: true });
   });
 

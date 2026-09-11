@@ -117,10 +117,10 @@ npm run seed
 
 Production seeding rejects the default/development admin password. The seed is idempotent for the catalogue/settings and does not overwrite an existing administrator password.
 
-For an existing Jones Kicks database, stock is migrated automatically to per-size inventory when the server starts. You can run the same idempotent migration explicitly before restart:
+For an existing Jones Kicks database, stock is migrated automatically to per-size inventory and missing legacy delivery fees are initialized to zero when the server starts. You can run the same idempotent migration explicitly before restart:
 
 ```bash
-npm run migrate:inventory
+npm run migrate:catalogue
 ```
 
 ## 5. Start directly
@@ -238,7 +238,7 @@ npm ci --omit=dev
 npm run verify
 npm run verify:paystack
 npm run verify:email
-npm run migrate:inventory
+npm run migrate:catalogue
 pm2 restart jones-kicks --update-env
 ```
 
@@ -262,6 +262,7 @@ Run `npm run seed` only when you intentionally want to ensure the seed catalogue
 - SMTP owner/customer delivery has been confirmed.
 - `/ready` returns HTTP 200.
 - Product add/edit/delete, image, delivery fee, default sizes and custom numeric/decimal size stock controls work from admin.
+- The edit form displays **Saving changes…**, returns **Sneaker updated**, and the changed record remains after a fresh admin catalogue reload.
 - A size with quantity 0 is visible as sold out; an unchecked size is removed from the storefront.
 - Paid order fulfilment status changes and customer tracking work.
 - Promotions, contact messages, subscribers and analytics are visible in admin.

@@ -1,7 +1,7 @@
 # Jones Kicks Production Audit
 
-Audit date: 9 September 2026
-Build: 7.0.0 — Atomic sneaker editing and custom-size inventory release
+Audit date: 11 September 2026
+Build: 9.0.0 — Complete UI/backend wiring and direct edit-save release
 
 ## Scope reviewed
 
@@ -11,11 +11,15 @@ Storefront, product catalogue, mobile branding, cart, per-product delivery fees,
 
 - Repaired administrator product create, edit and soft-delete API/UI flows and added route-level CRUD tests.
 - Replaced the fixed-size restriction with default 40–45 controls plus custom numeric/decimal sizes, each with independent stock.
-- Replaced the edit document-save path with a validated atomic update so payment-time inventory version changes cannot leave the Save button failing.
+- Fixed legacy products without a delivery-fee field, which caused native required-field validation to block the edit form before its submit handler ran.
+- Added an explicit Save action, visible inline validation and automatic focus/scroll to the exact invalid field instead of allowing a silent no-op.
+- Bound both the product form submit event and **Save sneaker** click directly to the save function; removed the synthetic `requestSubmit()` dependency.
+- Product edits now use a version-guarded validated write and a fresh MongoDB read-back before the API/UI reports success.
+- Sent the form-open product version with every edit so a genuinely stale form cannot overwrite newer inventory.
 - Replaced every deprecated Mongoose `new: true` update option with `returnDocument: "after"`.
 - Quantity `0` keeps a selected size visible as sold out; removing the selection hides that size from customers.
 - Persisted canonical `sizeInventory` entries in MongoDB and server-derived legacy `sizes`/total `stock` values.
-- Added an idempotent startup migration that preserves the total stock of older products while distributing it across their sizes.
+- Extended the idempotent startup migration to preserve/distribute older stock and initialize missing legacy delivery fees to zero.
 - Added customer-side sold-out indicators and prevented sold-out size selection before add-to-cart.
 - Added server-authoritative quote validation and atomic payment/restock updates for the exact ordered size.
 - Added optimistic-concurrency version increments so catalogue edits cannot silently overwrite payment-time stock changes.
@@ -52,14 +56,23 @@ Storefront, product catalogue, mobile branding, cart, per-product delivery fees,
 - Salted `scrypt` administrator passwords, signed cookies, CSRF protection, rate limiting and CSP/security headers.
 - Production seeding rejects default/placeholder administrator passwords.
 - Request IDs are sanitized before being reflected in response headers.
+- Audited every rendered interactive `data-*` action and every form against its client handler and backend route.
+- Added visible busy states to asynchronous forms and mutation buttons to prevent accidental duplicate requests.
+- Added confirmation before permanent message/subscriber deletion and promo deactivation.
+- Connected product-detail visits to the existing backend view counter and exposed product views in the catalogue.
+- Fixed URL-opened category filters, database-date newest sorting, featured sorting and slug-based related-product exclusion.
+- Connected the dashboard's top-selling product aggregation to its UI instead of discarding the returned data.
+- Kept the icon plus full **JONES KICKS** wordmark visible throughout the mobile storefront.
 - GitHub Pages auto-deployment workflow was removed because it could publish only the non-transactional static preview, not the production ecommerce application.
 
 ## Verification performed in this workspace
 
 - Clean `npm ci`: PASS.
-- `npm run check`: PASS — 56 required files and 57 critical feature assertions.
-- `npm test`: PASS — 36 tests, 36 passed, 0 failed.
-- Product-route tests cover administrator create/read/edit/delete behavior, atomic edit options and persisted default/custom size inventory.
+- `npm run check`: PASS — 59 required files and 62 critical feature assertions.
+- `npm test`: PASS — 44 tests, 44 passed, 0 failed.
+- Product-route tests cover administrator create/read/edit/delete behavior, authenticated CSRF requests, legacy delivery-fee records, version conflicts, MongoDB read-back confirmation and persisted default/custom size inventory.
+- UI/backend contract tests cover every rendered delegated control, every form, direct Save-button binding and every backend-required API family.
+- Route-level mutation tests cover settings, messages, subscribers, promotions, product views, contact enquiries and drop-list subscriptions.
 - Inventory tests cover custom decimal sizes, schema normalization, legacy migration, exact-size quoting, sold-out rejection, atomic decrement and cancellation restock.
 - Paystack tests cover exact amount/reference/currency/customer matching, environment mismatch rejection and safe checkout-origin validation.
 - Production environment tests cover HTTPS, matching live keys, same-origin callback and required SMTP configuration.

@@ -27,6 +27,7 @@ function productRecord(values = {}) {
     featured: true,
     active: true,
     views: 0,
+    __v: 3,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...values,
@@ -40,11 +41,16 @@ test("administrator product routes create, edit and remove size inventory", asyn
     find: Product.find,
     findById: Product.findById,
     findByIdAndUpdate: Product.findByIdAndUpdate,
+    updateOne: Product.updateOne,
   };
   context.after(() => Object.assign(Product, originals));
 
   let savedPayload;
+  let updateFilter;
+  let updatePayload;
   let updateOptions;
+  // Reproduce a catalogue row created before per-product delivery fees existed.
+  let storedProduct = productRecord({ deliveryFee: undefined });
   Product.exists = async () => false;
   Product.find = () => ({
     sort() {
@@ -54,7 +60,7 @@ test("administrator product routes create, edit and remove size inventory", asyn
       return this;
     },
     async lean() {
-      return [productRecord()];
+      return [structuredClone(storedProduct)];
     },
   });
   Product.create = async (payload) => {
@@ -62,10 +68,23 @@ test("administrator product routes create, edit and remove size inventory", asyn
     return productRecord(payload);
   };
 
-  const editable = productRecord();
-  Product.findById = async () => editable;
-  Product.findByIdAndUpdate = async (_id, update, options) => {
+  Product.findById = () => ({
+    async lean() {
+      return storedProduct ? structuredClone(storedProduct) : null;
+    },
+  });
+  Product.updateOne = async (_filter, update, options) => {
+    updateFilter = _filter;
+    updatePayload = update;
     updateOptions = options;
+    storedProduct = productRecord({
+      ...storedProduct,
+      ...update.$set,
+      __v: Number(storedProduct.__v || 0) + Number(update.$inc?.__v || 0),
+    });
+    return { acknowledged: true, matchedCount: 1, modifiedCount: 1 };
+  };
+  Product.findByIdAndUpdate = async (_id, update, options) => {
     if (update.$set) return productRecord(update.$set);
     return productRecord({ active: update.active ?? false });
   };
@@ -88,6 +107,7 @@ test("administrator product routes create, edit and remove size inventory", asyn
   const catalogue = await readResponse.json();
   assert.equal(catalogue.products.length, 1);
   assert.deepEqual(catalogue.products[0].sizes, [40, 46.5]);
+  assert.equal(catalogue.products[0].deliveryFee, 0);
 
   const createResponse = await fetch(`${origin}/api/admin/products`, {
     method: "POST",
@@ -136,18 +156,90 @@ test("administrator product routes create, edit and remove size inventory", asyn
         image: "/assets/images/pics1.jpeg",
         description: "Updated catalogue data with a different set of sizes.",
         featured: false,
+        version: 3,
       }),
     },
   );
   assert.equal(editResponse.status, 200);
   const edited = await editResponse.json();
+  assert.equal(edited.persisted, true);
   assert.deepEqual(edited.product.sizes, [41, 47.5]);
   assert.equal(edited.product.stock, 5);
   assert.equal(edited.product.deliveryFee, 4_000);
-  assert.deepEqual(updateOptions, {
-    returnDocument: "after",
-    runValidators: true,
+  assert.equal(edited.product.version, 4);
+  assert.deepEqual(updateOptions, { runValidators: true });
+  assert.deepEqual(updateFilter, {
+    _id: "507f1f77bcf86cd799439011",
+    __v: 3,
   });
+  assert.deepEqual(updatePayload.$set.sizeInventory, [
+    { size: 41, stock: 1 },
+    { size: 47.5, stock: 4 },
+  ]);
+  assert.deepEqual(updatePayload.$inc, { __v: 1 });
+
+  const persistedResponse = await fetch(`${origin}/api/admin/products`);
+  assert.equal(persistedResponse.status, 200);
+  const persisted = await persistedResponse.json();
+  assert.equal(persisted.products[0].name, "CRUD Runner Updated");
+  assert.equal(persisted.products[0].deliveryFee, 4_000);
+  assert.deepEqual(persisted.products[0].sizes, [41, 47.5]);
+
+  let staleWriteAttempted = false;
+  Product.updateOne = async () => {
+    staleWriteAttempted = true;
+    return { acknowledged: true, matchedCount: 1, modifiedCount: 1 };
+  };
+  const staleResponse = await fetch(
+    `${origin}/api/admin/products/507f1f77bcf86cd799439011`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Stale Catalogue Edit",
+        category: "Lifestyle",
+        tag: "Restock",
+        price: 52_000,
+        comparePrice: 60_000,
+        deliveryFee: 4_000,
+        sizeInventory: [{ size: 41, stock: 9 }],
+        image: "/assets/images/pics1.jpeg",
+        description: "An edit opened before the current product version.",
+        featured: false,
+        version: 3,
+      }),
+    },
+  );
+  assert.equal(staleResponse.status, 409);
+  assert.match((await staleResponse.json()).error, /form was open/i);
+  assert.equal(staleWriteAttempted, false);
+
+  Product.updateOne = async () => ({
+    acknowledged: true,
+    matchedCount: 0,
+    modifiedCount: 0,
+  });
+  const conflictResponse = await fetch(
+    `${origin}/api/admin/products/507f1f77bcf86cd799439011`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Stale Catalogue Edit",
+        category: "Lifestyle",
+        tag: "Restock",
+        price: 52_000,
+        comparePrice: 60_000,
+        deliveryFee: 4_000,
+        sizeInventory: [{ size: 41, stock: 9 }],
+        image: "/assets/images/pics1.jpeg",
+        description: "A stale edit must not overwrite newer inventory changes.",
+        featured: false,
+      }),
+    },
+  );
+  assert.equal(conflictResponse.status, 409);
+  assert.match((await conflictResponse.json()).error, /could not be saved/i);
 
   const invalidResponse = await fetch(`${origin}/api/admin/products`, {
     method: "POST",

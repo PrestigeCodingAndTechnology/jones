@@ -4,7 +4,7 @@ Jones Kicks is a complete sneaker ecommerce application built with Node.js, Expr
 
 ## Customer features
 
-- Responsive premium storefront with hero slider, catalogue, search, category filters, sorting, quick view and product pages.
+- Responsive premium storefront with hero slider, catalogue, working URL-aware category filters, newest/price/featured sorting, quick view and product pages.
 - Per-product EU sizes with live stock per size, including custom numeric and decimal sizes outside the default 40–45 set. Sold-out sizes remain visible but disabled, while sizes the administrator removes are hidden.
 - Wishlist/favourites and persistent shopping bag.
 - Server-authoritative pricing. The browser cannot choose product prices, delivery fees, discounts or final totals.
@@ -18,6 +18,7 @@ Jones Kicks is a complete sneaker ecommerce application built with Node.js, Expr
 - Contact enquiry and WhatsApp/drop-list subscription forms.
 - Customer confirmation/status emails when SMTP is configured.
 - Privacy-preserving visitor/page analytics.
+- Product-detail visits are recorded through the backend and shown per sneaker in the admin catalogue.
 
 ## Administrator features
 
@@ -26,6 +27,8 @@ Jones Kicks is a complete sneaker ecommerce application built with Node.js, Expr
 - Login/API rate limiting, CSP/security headers and request-ID handling.
 - Dashboard metrics for products, orders, paid revenue, visitors, low stock, messages, subscribers and promotions.
 - Product create/edit/soft-delete, featured flag, prices, description, image and per-product delivery-fee management.
+- The product form and its **Save sneaker** button are bound directly, so both button clicks and Enter-key submission reach the same save function without relying on synthetic browser submission.
+- Edit saves are validated visibly, protected from stale concurrent inventory overwrites, written to MongoDB and read back before the UI reports success.
 - Size-inventory editor with default EU 40–45 controls plus validated custom sizes from 1–100 (up to two decimal places), independent stock quantities and complete add/remove controls. Total product stock is server-derived.
 - Signature-validated JPG/PNG/WebP image uploads.
 - Order centre with customer/delivery details, line items, discounts, payment/refund state and status history.
@@ -34,6 +37,7 @@ Jones Kicks is a complete sneaker ecommerce application built with Node.js, Expr
 - Promotion management, contact-message inbox and subscriber management.
 - Sales/traffic analytics and store/notification settings.
 - Administrator password change.
+- Busy/disabled states prevent duplicate submissions across login, checkout, settings, promotions, order actions, messages, subscribers and public forms; destructive inbox/subscriber/promo actions require confirmation.
 
 ## Live Paystack architecture
 
@@ -95,6 +99,18 @@ For auto-reload:
 ```bash
 npm run dev
 ```
+
+### If an older browser tab still shows the previous Save behavior
+
+Stop the old process, start this extracted `9.0.0` folder, and hard-refresh the admin page:
+
+```bash
+npm ci
+npm run migrate:catalogue
+npm start
+```
+
+The EJS page references `app.js?v=9.0.0`, and HTML/API responses use `no-store`, so the corrected direct Save-button binding replaces the older cached script.
 
 Or start the application and MongoDB together with Docker:
 
@@ -168,7 +184,8 @@ npm run test:core         # behavioral tests, including Paystack verification ru
 npm test                  # core tests + Express/EJS smoke test
 npm run verify:paystack   # live Paystack authentication check; creates no charge
 npm run verify:email      # SMTP authentication check; sends no email
-npm run migrate:inventory # migrate an older catalogue to stock per size
+npm run migrate:catalogue # migrate older size inventory and missing delivery fees
+npm run migrate:inventory # backwards-compatible alias for migrate:catalogue
 npm run verify            # project check + all tests + production dependency audit
 ```
 

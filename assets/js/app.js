@@ -1,7 +1,7 @@
 (function clientApp() {
   "use strict";
   const K = {
-    products: "jk_products_v7",
+    products: "jk_products_v9",
     cart: "jk_cart_v2",
     orders: "jk_orders_v2",
     views: "jk_views_v2",
@@ -19,6 +19,7 @@
     paymentConfigured: false,
     paymentEnvironment: "unconfigured",
     paystackPublicKey: "",
+    productDetailPath: "",
   };
   const imageRoot = runtime.api ? "/assets/images/" : "assets/images/";
   const fallback = [
@@ -190,15 +191,18 @@
     return d.toISOString().slice(0, 10);
   }
   function date(v) {
+    const parsed = new Date(v);
+    if (Number.isNaN(parsed.getTime())) return "Not recorded";
     return new Intl.DateTimeFormat("en-NG", {
       day: "2-digit",
       month: "short",
       year: "numeric",
-    }).format(new Date(v));
+    }).format(parsed);
   }
   function product(id) {
+    const identifier = String(id || "");
     return state.products.find(function (p) {
-      return p.id === id;
+      return String(p.id) === identifier || String(p.slug || "") === identifier;
     });
   }
   const DEFAULT_SNEAKER_SIZES = [40, 41, 42, 43, 44, 45];
@@ -349,8 +353,11 @@
     state.quote = null;
     state.promo = null;
   }
-  async function api(path, options) {
-    const config = Object.assign({ headers: {} }, options || {});
+  async function api(path, options, attempt) {
+    const config = Object.assign(
+      { headers: {}, credentials: "same-origin", cache: "no-store" },
+      options || {},
+    );
     config.headers = Object.assign(
       { Accept: "application/json" },
       config.headers || {},
@@ -371,8 +378,35 @@
           : await response.json().catch(function () {
               return {};
             });
-    if (!response.ok)
-      throw new Error(payload.error || "The request could not be completed.");
+    if (
+      response.status === 403 &&
+      attempt !== 1 &&
+      !["GET", "HEAD"].includes(
+        String(config.method || "GET").toUpperCase(),
+      ) &&
+      /session has expired/i.test(String(payload.error || ""))
+    ) {
+      const sessionResponse = await fetch("/api/session", {
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const session = await sessionResponse.json().catch(function () {
+        return {};
+      });
+      if (sessionResponse.ok && session.csrfToken) {
+        runtime.csrfToken = session.csrfToken;
+        return api(path, options, 1);
+      }
+    }
+    if (!response.ok) {
+      const reference = payload.requestId
+        ? " Reference: " + String(payload.requestId) + "."
+        : "";
+      throw new Error(
+        (payload.error || "The request could not be completed.") + reference,
+      );
+    }
     return payload;
   }
   function visitorId() {
@@ -400,6 +434,83 @@
           referrer: document.referrer,
         },
       }).catch(function () {});
+  }
+  async function trackProductDetail(path) {
+    if (!runtime.api || !path.startsWith("/product/")) {
+      runtime.productDetailPath = "";
+      return;
+    }
+    if (runtime.productDetailPath === path) return;
+    runtime.productDetailPath = path;
+    let identifier;
+    try {
+      identifier = decodeURIComponent(path.split("/").pop());
+    } catch {
+      runtime.productDetailPath = "";
+      return;
+    }
+    const existedBefore = Boolean(product(identifier));
+    try {
+      const result = await api(
+        "/api/products/" + encodeURIComponent(identifier),
+      );
+      if (!result.product || runtime.productDetailPath !== path) return;
+      const index = state.products.findIndex(function (item) {
+        return (
+          String(item.id) === String(result.product.id) ||
+          (result.product.slug && item.slug === result.product.slug)
+        );
+      });
+      if (index >= 0) state.products[index] = result.product;
+      else state.products.push(result.product);
+      if (!existedBefore && url().pathname.replace(/\/$/, "") === path) render();
+    } catch (error) {
+      runtime.productDetailPath = "";
+      if (!existedBefore && url().pathname.replace(/\/$/, "") === path) {
+        toast(error.message, "!");
+      }
+    }
+  }
+  function runRouteEffects(path) {
+    trackVisit(path);
+    void trackProductDetail(path);
+  }
+  function beginButtonTask(button, label) {
+    if (!button || button.dataset.busy === "true") return null;
+    const original = button.textContent;
+    button.dataset.busy = "true";
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    if (label) button.textContent = label;
+    return function finishButtonTask() {
+      button.dataset.busy = "false";
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = original;
+    };
+  }
+  async function withButtonBusy(button, label, task) {
+    const finish = beginButtonTask(button, label);
+    if (!finish) return;
+    try {
+      await task();
+    } finally {
+      finish();
+    }
+  }
+  async function withFormBusy(form, label, task) {
+    const button = form.querySelector(
+        'button[type="submit"], button:not([type])',
+      ),
+      finish = beginButtonTask(button, label);
+    if (!finish) return;
+    form.setAttribute("aria-busy", "true");
+    try {
+      await task();
+    } finally {
+      form.removeAttribute("aria-busy");
+      finish();
+    }
   }
   function migrateCart() {
     state.cart = state.cart
@@ -452,7 +563,7 @@
       history.pushState({}, "", p);
       render();
     }
-    trackVisit(p.split("?")[0]);
+    runRouteEffects(p.split("?")[0].replace(/\/$/, "") || "/");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   function icon(n) {
@@ -685,7 +796,7 @@
         imageRoot + "pics21.jpeg",
         fallback[7],
       ) +
-      '<div class="hero-meta"><div class="hero-pager"><button class="hero-dot active" data-hero-dot="0"></button><button class="hero-dot" data-hero-dot="1"></button><button class="hero-dot" data-hero-dot="2"></button></div><div class="hero-stat"><strong>EU</strong><span>Custom<br>sizes</span></div></div></section><div class="marquee"><div class="marquee-track"><span>Fresh drops</span><span>Premium selection</span><span>Secure ordering</span><span>Product-specific sizes</span><span>Style without limits</span><span>Fresh drops</span><span>Premium selection</span><span>Secure ordering</span><span>Product-specific sizes</span><span>Style without limits</span></div></div><section class="section-sm"><div class="container"><div class="trust-grid" data-aos="fade-up"><div class="trust-item"><span class="trust-icon">✦</span><h3>Freshly curated</h3><p>A focused edit of standout everyday and limited silhouettes.</p></div><div class="trust-item"><span class="trust-icon">⌁</span><h3>Easy size selection</h3><p>Choose from every EU size currently offered for the sneaker.</p></div><div class="trust-item"><span class="trust-icon">✓</span><h3>Smooth ordering</h3><p>Bag your pair, add delivery details and confirm in minutes.</p></div><div class="trust-item"><span class="trust-icon">↗</span><h3>Human support</h3><p>Need help? Continue the conversation directly on WhatsApp.</p></div></div></div></section><section class="section"><div class="container"><div class="section-head"><div><p class="eyebrow">Shop the drop</p><h2 class="display section-title">Fresh on the shelf</h2></div><p class="section-copy">Meet the pairs currently setting the pace. Choose a sneaker, select your size and build your rotation.</p></div><div class="product-grid">' +
+      '<div class="hero-meta"><div class="hero-pager"><button class="hero-dot active" data-hero-dot="0" aria-label="Show hero slide 1"></button><button class="hero-dot" data-hero-dot="1" aria-label="Show hero slide 2"></button><button class="hero-dot" data-hero-dot="2" aria-label="Show hero slide 3"></button></div><div class="hero-stat"><strong>EU</strong><span>Custom<br>sizes</span></div></div></section><div class="marquee"><div class="marquee-track"><span>Fresh drops</span><span>Premium selection</span><span>Secure ordering</span><span>Product-specific sizes</span><span>Style without limits</span><span>Fresh drops</span><span>Premium selection</span><span>Secure ordering</span><span>Product-specific sizes</span><span>Style without limits</span></div></div><section class="section-sm"><div class="container"><div class="trust-grid" data-aos="fade-up"><div class="trust-item"><span class="trust-icon">✦</span><h3>Freshly curated</h3><p>A focused edit of standout everyday and limited silhouettes.</p></div><div class="trust-item"><span class="trust-icon">⌁</span><h3>Easy size selection</h3><p>Choose from every EU size currently offered for the sneaker.</p></div><div class="trust-item"><span class="trust-icon">✓</span><h3>Smooth ordering</h3><p>Bag your pair, add delivery details and confirm in minutes.</p></div><div class="trust-item"><span class="trust-icon">↗</span><h3>Human support</h3><p>Need help? Continue the conversation directly on WhatsApp.</p></div></div></div></section><section class="section"><div class="container"><div class="section-head"><div><p class="eyebrow">Shop the drop</p><h2 class="display section-title">Fresh on the shelf</h2></div><p class="section-copy">Meet the pairs currently setting the pace. Choose a sneaker, select your size and build your rotation.</p></div><div class="product-grid">' +
       featured.map(card).join("") +
       '</div><div style="text-align:center;margin-top:40px"><a class="btn btn-outline" href="' +
       href("/shop") +
@@ -742,7 +853,15 @@
       });
     if (state.sort === "new")
       list.sort(function (a, b) {
-        return b.createdAt - a.createdAt;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+    if (state.sort === "featured")
+      list.sort(function (a, b) {
+        const priority = Number(Boolean(b.featured)) - Number(Boolean(a.featured));
+        return (
+          priority ||
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
       });
     const cats = ["All"].concat(
       Array.from(
@@ -794,7 +913,7 @@
     if (!p) return notFound();
     const related = state.products
       .filter(function (x) {
-        return x.id !== id && x.category === p.category;
+        return String(x.id) !== String(p.id) && x.category === p.category;
       })
       .slice(0, 4);
     return (
@@ -1327,7 +1446,11 @@
           })
           .concat([1]),
       ),
-      top = state.products.slice(0, 5);
+      salesLeaders = Array.isArray(state.dashboard?.topProducts)
+        ? state.dashboard.topProducts
+        : [],
+      top = salesLeaders.length ? salesLeaders : state.products.slice(0, 5),
+      showingSales = salesLeaders.length > 0;
     return (
       '<div class="admin-heading"><div><h2>Store overview</h2><p>Live catalogue, payment, order and visitor activity.</p></div><button class="btn btn-acid" data-new-product>Add sneaker</button></div><div class="kpi-grid"><div class="kpi"><div class="kpi-top"><span>Unique visitors</span><span class="kpi-icon">↗</span></div><strong>' +
       Number(visitorCount).toLocaleString() +
@@ -1359,20 +1482,28 @@
           );
         })
         .join("") +
-      '</div></div><div class="admin-card"><div class="admin-card-head"><h3>Catalogue snapshot</h3><button data-admin-tab="catalogue">Manage</button></div><div class="top-products">' +
+      '</div></div><div class="admin-card"><div class="admin-card-head"><h3>' +
+      (showingSales ? "Top selling sneakers" : "Catalogue snapshot") +
+      '</h3><button data-admin-tab="catalogue">Manage</button></div><div class="top-products">' +
       top
         .map(function (p) {
           return (
             '<div class="top-product">' +
-            img(p) +
+            img(
+              showingSales
+                ? Object.assign({}, p, { fallback: p.image || fallback[0] })
+                : p,
+            ) +
             "<div><h4>" +
             esc(p.name) +
             "</h4><p>" +
-            p.stock +
-            " pairs in stock<br>" +
-            esc(sizeStockSummary(p)) +
+            (showingSales
+              ? Number(p.sales || 0).toLocaleString() + " pairs sold"
+              : p.stock +
+                " pairs in stock<br>" +
+                esc(sizeStockSummary(p))) +
             "</p></div><strong>" +
-            money(p.price) +
+            money(showingSales ? p.revenue : p.price) +
             "</strong></div>"
           );
         })
@@ -1394,7 +1525,7 @@
       icon("search") +
       '</button></form><span class="muted">' +
       list.length +
-      ' products</span></div><div class="data-table-wrap"><table class="data-table"><thead><tr><th>Product</th><th>Price</th><th>Delivery fee</th><th>Sizes</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
+      ' products</span></div><div class="data-table-wrap"><table class="data-table"><thead><tr><th>Product</th><th>Price</th><th>Delivery fee</th><th>Sizes</th><th>Stock</th><th>Views</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
       list
         .map(function (p) {
           const inventory = sizeInventoryFor(p),
@@ -1431,6 +1562,8 @@
             sizeStockBadges(p) +
             "</div></td><td>" +
             p.stock +
+            "</td><td>" +
+            Number(p.views || 0).toLocaleString() +
             '</td><td><span class="status ' +
             (s === "Sold out" ? "sold" : s !== "Active" ? "low" : "") +
             '">' +
@@ -1691,9 +1824,13 @@
       esc(state.settings.notificationEmail) +
       '" placeholder="orders@yourdomain.com"><small>SMTP credentials must also be configured on the server.</small></div><div class="toggle-row"><div><strong>New-order alerts</strong><span>Email the owner after confirmed payment</span></div><button type="button" class="toggle ' +
       (state.settings.orderAlerts ? "on" : "") +
-      '" data-toggle-setting="orderAlerts"></button></div><div class="toggle-row"><div><strong>Website view tracking</strong><span>Measure unique visitors and page views</span></div><button type="button" class="toggle ' +
+      '" data-toggle-setting="orderAlerts" role="switch" aria-checked="' +
+      (state.settings.orderAlerts ? "true" : "false") +
+      '"></button></div><div class="toggle-row"><div><strong>Website view tracking</strong><span>Measure unique visitors and page views</span></div><button type="button" class="toggle ' +
       (state.settings.viewTracking ? "on" : "") +
-      '" data-toggle-setting="viewTracking"></button></div></section></div><button class="btn btn-acid" style="margin-top:18px">Save settings</button></form><form id="password-form" class="settings-card password-card" style="margin-top:22px"><h3>Administrator password</h3><p>Use at least 12 characters for the live store.</p><div class="field-grid"><div class="field"><label>Current password</label><input name="currentPassword" type="password" autocomplete="current-password" required></div><div class="field"><label>New password</label><input name="newPassword" type="password" autocomplete="new-password" minlength="12" required></div></div><button class="btn btn-outline" style="margin-top:18px">Update password</button></form>'
+      '" data-toggle-setting="viewTracking" role="switch" aria-checked="' +
+      (state.settings.viewTracking ? "true" : "false") +
+      '"></button></div></section></div><button class="btn btn-acid" style="margin-top:18px">Save settings</button></form><form id="password-form" class="settings-card password-card" style="margin-top:22px"><h3>Administrator password</h3><p>Use at least 12 characters for the live store.</p><div class="field-grid"><div class="field"><label>Current password</label><input name="currentPassword" type="password" autocomplete="current-password" required></div><div class="field"><label>New password</label><input name="newPassword" type="password" autocomplete="new-password" minlength="12" required></div></div><button class="btn btn-outline" style="margin-top:18px">Update password</button></form>'
     );
   }
   function admin() {
@@ -2220,10 +2357,12 @@
         .join("");
     state.upload = "";
     modal(
-      '<form class="admin-modal" id="product-form"><h2>' +
+      '<form class="admin-modal" id="product-form" novalidate><h2>' +
         (p ? "Edit sneaker" : "Add new sneaker") +
         '</h2><input type="hidden" name="id" value="' +
         esc(p ? p.id : "") +
+        '"><input type="hidden" name="version" value="' +
+        esc(p ? Number(p.version || 0) : "") +
         '"><div class="field-grid"><div class="field full"><label>Product name</label><input name="name" required value="' +
         esc(p ? p.name : "") +
         '"></div><div class="field"><label>Category</label><input name="category" required value="' +
@@ -2235,7 +2374,11 @@
         '"></div><div class="field"><label>Previous price (₦)</label><input name="comparePrice" type="number" min="0" step="1" value="' +
         esc(p ? p.comparePrice : "") +
         '"></div><div class="field"><label>Delivery fee per pair (₦)</label><input name="deliveryFee" type="number" min="0" step="1" required value="' +
-        esc(p ? p.deliveryFee : 0) +
+        esc(
+          p && Number.isFinite(Number(p.deliveryFee))
+            ? Number(p.deliveryFee)
+            : 0,
+        ) +
         '"><small>This exact fee follows the product into cart, checkout and the order.</small></div><div class="field full"><label>Available sizes and stock</label><div class="size-inventory-editor" data-size-inventory-editor>' +
         sizeEditor +
         '</div><div class="custom-size-adder"><div><strong>Add a custom size</strong><small>Examples: 39, 39.5, 46 or 47.5</small></div><input id="custom-sneaker-size" type="number" min="1" max="100" step="0.01" inputmode="decimal" placeholder="e.g. 46.5" aria-label="Custom sneaker size"><button class="btn btn-outline" type="button" data-add-custom-size>Add size</button></div><small>Check every size you offer. Enter 0 to keep a size visible as sold out; uncheck it to hide it. Custom sizes can also be removed completely.</small></div><div class="field full"><label>Image URL</label><input name="image" value="' +
@@ -2244,13 +2387,45 @@
         esc(p ? p.description : "") +
         '</textarea></div><div class="field full"><label class="check-row"><input name="featured" type="checkbox" ' +
         (!p || p.featured ? "checked" : "") +
-        '> <span>Feature this sneaker in priority storefront listings</span></label></div></div><p class="form-error" data-product-form-error role="alert" hidden></p><div class="modal-actions"><button type="button" class="btn btn-outline" data-layer-close>Cancel</button><button type="submit" class="btn btn-acid">Save sneaker</button></div></form>',
+        '> <span>Feature this sneaker in priority storefront listings</span></label></div></div><p class="form-error" data-product-form-error role="alert" aria-live="polite" hidden></p><div class="modal-actions"><button type="button" class="btn btn-outline" data-layer-close>Cancel</button><button type="submit" class="btn btn-acid" data-save-product>Save sneaker</button></div></form>',
       "admin-modal",
     );
+    const productForm = document.getElementById("product-form");
+    if (productForm) {
+      // Bind the edit form itself instead of relying only on document-level
+      // delegation. With novalidate, every click reaches saveProduct, where
+      // invalid fields receive a visible inline message and focus.
+      productForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        void saveProduct(productForm);
+      });
+      const saveButton = productForm.querySelector("[data-save-product]");
+      if (saveButton) {
+        saveButton.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          void saveProduct(productForm);
+        });
+      }
+    }
   }
   async function saveProduct(form) {
+    const invalidField = form.querySelector(":invalid");
+    if (invalidField) {
+      const field = invalidField.closest(".field"),
+        label = field && field.querySelector("label"),
+        fieldName = label ? label.textContent.trim() : "This field",
+        message = invalidField.validationMessage || "Enter a valid value.";
+      showProductFormError(form, fieldName + ": " + message);
+      invalidField.focus({ preventScroll: true });
+      invalidField.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     const d = new FormData(form),
-      old = product(String(d.get("id"))),
+      id = String(d.get("id") || ""),
+      editing = Boolean(id),
+      old = product(id),
       sizeInventory = Array.from(form.querySelectorAll("[data-size-row]"))
         .filter(function (row) {
           return Boolean(row.querySelector("[data-size-toggle]")?.checked);
@@ -2273,6 +2448,7 @@
         imageData: state.upload,
         description: String(d.get("description")).trim(),
         featured: d.get("featured") === "on",
+        version: editing ? Number(d.get("version") || 0) : undefined,
       };
     if (!sizeInventory.length) {
       showProductFormError(form, "Choose at least one sneaker size.");
@@ -2321,24 +2497,31 @@
     form.dataset.saving = "true";
     if (submitButton) {
       submitButton.disabled = true;
-      submitButton.textContent = old ? "Saving changes…" : "Adding sneaker…";
+      submitButton.textContent = editing
+        ? "Saving changes…"
+        : "Adding sneaker…";
     }
     if (runtime.api) {
       try {
         const result = await api(
-            old
-              ? "/api/admin/products/" + encodeURIComponent(old.id)
+            editing
+              ? "/api/admin/products/" + encodeURIComponent(id)
               : "/api/admin/products",
-            { method: old ? "PATCH" : "POST", body: payload },
+            { method: editing ? "PATCH" : "POST", body: payload },
           ),
           p = result.product;
+        if (!p || !p.id || (editing && result.persisted !== true)) {
+          throw new Error(
+            "The server did not confirm that this sneaker was saved. Please try again.",
+          );
+        }
         const savedIndex = state.products.findIndex(function (item) {
           return String(item.id) === String(p.id);
         });
         if (savedIndex >= 0) state.products[savedIndex] = p;
         else state.products.unshift(p);
         close();
-        toast(old ? "Sneaker updated." : "New sneaker added.", "✓");
+        toast(editing ? "Sneaker updated." : "New sneaker added.", "✓");
         renderAdmin();
       } catch (error) {
         showProductFormError(form, error.message);
@@ -2353,7 +2536,7 @@
     }
     const p = Object.assign(
       {
-        id: old ? old.id : "jk-" + Date.now().toString(36),
+        id: editing ? id : "jk-" + Date.now().toString(36),
         fallback: old
           ? old.fallback
           : fallback[state.products.length % fallback.length],
@@ -2378,7 +2561,7 @@
     else state.products.unshift(p);
     if (save(K.products, state.products)) {
       close();
-      toast(old ? "Sneaker updated." : "New sneaker added.", "✓");
+      toast(editing ? "Sneaker updated." : "New sneaker added.", "✓");
       renderAdmin();
     }
     form.dataset.saving = "false";
@@ -2411,10 +2594,10 @@
       }
     }
     state.products = state.products.filter(function (p) {
-      return p.id !== id;
+      return String(p.id) !== String(id);
     });
     state.cart = state.cart.filter(function (x) {
-      return x.productId !== id;
+      return String(x.productId) !== String(id);
     });
     save(K.products, state.products);
     save(K.cart, state.cart);
@@ -2505,6 +2688,12 @@
   }
   async function disableCoupon(id) {
     if (!runtime.api) return;
+    if (
+      !window.confirm(
+        "Disable this promo code? Customers will no longer be able to apply it.",
+      )
+    )
+      return;
     try {
       await api("/api/admin/coupons/" + encodeURIComponent(id), {
         method: "DELETE",
@@ -2538,6 +2727,7 @@
   }
   async function deleteMessage(id) {
     if (!runtime.api) return;
+    if (!window.confirm("Permanently delete this customer message?")) return;
     try {
       await api("/api/admin/messages/" + encodeURIComponent(id), {
         method: "DELETE",
@@ -2570,6 +2760,7 @@
   }
   async function deleteSubscriber(id) {
     if (!runtime.api) return;
+    if (!window.confirm("Permanently delete this subscriber?")) return;
     try {
       await api("/api/admin/subscribers/" + encodeURIComponent(id), {
         method: "DELETE",
@@ -3055,7 +3246,7 @@
       if (path.startsWith("/admin") && runtime.adminAuthenticated) {
         await loadAdminTab("dashboard");
       } else render();
-      trackVisit(path);
+      runRouteEffects(path);
     } catch (error) {
       runtime.api = false;
       toast(
@@ -3126,14 +3317,22 @@
     else if (t.matches("[data-wish]")) wish(t.dataset.wish);
     else if (t.matches("[data-filter]")) {
       state.filter = t.dataset.filter;
-      render();
+      go(
+        "/shop" +
+          (state.filter === "All"
+            ? ""
+            : "?category=" + encodeURIComponent(state.filter)),
+      );
     } else if (t.matches("[data-clear-filter]")) {
       state.filter = "All";
       state.query = "";
-      render();
+      go("/shop");
     } else if (t.matches("[data-qty]")) qty(t.dataset.line, t.dataset.qty);
     else if (t.matches("[data-remove]")) remove(t.dataset.remove);
-    else if (t.matches("[data-promo]")) void applyPromo(false);
+    else if (t.matches("[data-promo]"))
+      void withButtonBusy(t, "Checking…", function () {
+        return applyPromo(false);
+      });
     else if (t.matches("[data-promo-remove]")) void applyPromo(true);
     else if (t.matches("[data-order-page]") && !t.disabled) {
       state.adminLoading = true;
@@ -3150,7 +3349,8 @@
         });
     } else if (t.matches("[data-admin-tab]"))
       void loadAdminTab(t.dataset.adminTab);
-    else if (t.matches("[data-admin-logout]")) void logout();
+    else if (t.matches("[data-admin-logout]"))
+      void withButtonBusy(t, "Signing out…", logout);
     else if (t.matches("[data-new-product]")) editProduct();
     else if (t.matches("[data-add-custom-size]")) addCustomProductSize();
     else if (t.matches("[data-remove-custom-size]")) {
@@ -3166,30 +3366,48 @@
     else if (t.matches("[data-new-coupon]")) editCoupon();
     else if (t.matches("[data-edit-coupon]")) editCoupon(t.dataset.editCoupon);
     else if (t.matches("[data-delete-coupon]"))
-      void disableCoupon(t.dataset.deleteCoupon);
+      void withButtonBusy(t, "Disabling…", function () {
+        return disableCoupon(t.dataset.deleteCoupon);
+      });
     else if (t.matches("[data-message-status]"))
-      void updateMessageStatus(t.dataset.messageStatus, t.dataset.status);
+      void withButtonBusy(t, "Saving…", function () {
+        return updateMessageStatus(t.dataset.messageStatus, t.dataset.status);
+      });
     else if (t.matches("[data-delete-message]"))
-      void deleteMessage(t.dataset.deleteMessage);
+      void withButtonBusy(t, "Deleting…", function () {
+        return deleteMessage(t.dataset.deleteMessage);
+      });
     else if (t.matches("[data-subscriber-toggle]"))
-      void toggleSubscriber(
-        t.dataset.subscriberToggle,
-        t.dataset.active === "true",
-      );
+      void withButtonBusy(t, "Saving…", function () {
+        return toggleSubscriber(
+          t.dataset.subscriberToggle,
+          t.dataset.active === "true",
+        );
+      });
     else if (t.matches("[data-delete-subscriber]"))
-      void deleteSubscriber(t.dataset.deleteSubscriber);
+      void withButtonBusy(t, "Deleting…", function () {
+        return deleteSubscriber(t.dataset.deleteSubscriber);
+      });
     else if (t.matches("[data-confirm-delete]"))
-      void del(t.dataset.confirmDelete);
+      void withButtonBusy(t, "Removing…", function () {
+        return del(t.dataset.confirmDelete);
+      });
     else if (t.matches("[data-order-view]")) openOrder(t.dataset.orderView);
     else if (t.matches("[data-refund-order]"))
-      void refundOrder(t.dataset.refundOrder);
+      void withButtonBusy(t, "Submitting…", function () {
+        return refundOrder(t.dataset.refundOrder);
+      });
     else if (t.matches("[data-save-order]")) {
       const s = document.getElementById("order-status");
-      if (s) void saveOrderStatus(t.dataset.saveOrder, s.value);
+      if (s)
+        void withButtonBusy(t, "Saving…", function () {
+          return saveOrderStatus(t.dataset.saveOrder, s.value);
+        });
     } else if (t.matches("[data-toggle-setting]")) {
       const k = t.dataset.toggleSetting;
       state.settings[k] = !state.settings[k];
       t.classList.toggle("on", state.settings[k]);
+      t.setAttribute("aria-checked", state.settings[k] ? "true" : "false");
     }
   });
   document.addEventListener("submit", function (e) {
@@ -3209,16 +3427,39 @@
       state.orderPaymentStatus = String(d.get("paymentStatus") || "");
       state.orderPage = 1;
       void loadAdminTab("orders");
-    } else if (f.id === "newsletter-form") void subscribe(f);
-    else if (f.id === "contact-form") void sendContact(f);
+    } else if (f.id === "newsletter-form")
+      void withFormBusy(f, "Joining…", function () {
+        return subscribe(f);
+      });
+    else if (f.id === "contact-form")
+      void withFormBusy(f, "Sending…", function () {
+        return sendContact(f);
+      });
     else if (f.id === "checkout-form")
-      void payment(Object.fromEntries(new FormData(f).entries()));
-    else if (f.id === "admin-login") void login(f);
+      void withFormBusy(f, "Opening Paystack…", function () {
+        return payment(Object.fromEntries(new FormData(f).entries()));
+      });
+    else if (f.id === "admin-login")
+      void withFormBusy(f, "Signing in…", function () {
+        return login(f);
+      });
     else if (f.id === "product-form") void saveProduct(f);
-    else if (f.id === "coupon-form") void saveCoupon(f);
-    else if (f.id === "settings-form") void saveSettings(f);
-    else if (f.id === "password-form") void savePassword(f);
-    else if (f.id === "track-order-form") void lookupOrder(f);
+    else if (f.id === "coupon-form")
+      void withFormBusy(f, "Saving…", function () {
+        return saveCoupon(f);
+      });
+    else if (f.id === "settings-form")
+      void withFormBusy(f, "Saving…", function () {
+        return saveSettings(f);
+      });
+    else if (f.id === "password-form")
+      void withFormBusy(f, "Updating…", function () {
+        return savePassword(f);
+      });
+    else if (f.id === "track-order-form")
+      void withFormBusy(f, "Checking…", function () {
+        return lookupOrder(f);
+      });
   });
   document.addEventListener("change", function (e) {
     if (e.target.id === "sort-select") {
@@ -3276,8 +3517,13 @@
       addCustomProductSize();
     } else if (e.key === "Escape") close();
   });
-  window.addEventListener("popstate", render);
-  window.addEventListener("hashchange", render);
+  function handleHistoryNavigation() {
+    render();
+    const path = url().pathname.replace(/\/$/, "") || "/";
+    runRouteEffects(path);
+  }
+  window.addEventListener("popstate", handleHistoryNavigation);
+  window.addEventListener("hashchange", handleHistoryNavigation);
   if (!runtime.api) {
     if (!localStorage.getItem(K.products)) save(K.products, state.products);
     if (!localStorage.getItem(K.settings)) save(K.settings, state.settings);

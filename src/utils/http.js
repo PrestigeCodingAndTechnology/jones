@@ -69,7 +69,12 @@ export function publicProduct(product) {
     tag: product.tag,
     price: product.price,
     comparePrice: product.comparePrice,
-    deliveryFee: product.deliveryFee,
+    // Products created before delivery fees were introduced do not have this
+    // field in MongoDB. Always expose a numeric value so the required admin
+    // input cannot render empty and silently block the edit form submission.
+    deliveryFee: Number.isFinite(Number(product.deliveryFee))
+      ? Number(product.deliveryFee)
+      : 0,
     stock: totalInventoryStock(sizeInventory),
     sizes: sizeInventory.map((entry) => entry.size),
     sizeInventory,
@@ -78,7 +83,8 @@ export function publicProduct(product) {
     description: product.description,
     featured: product.featured,
     active: product.active,
-    views: product.views,
+    views: Math.max(0, Number(product.views || 0)),
+    version: Math.max(0, Number(product.__v || 0)),
     createdAt: product.createdAt,
     updatedAt: product.updatedAt,
   };

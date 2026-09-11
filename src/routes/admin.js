@@ -178,7 +178,7 @@ adminRouter.get(
     }
     const products = await Product.find(filter)
       .sort({ createdAt: -1 })
-      .limit(200)
+      .limit(500)
       .lean();
     res.json({ products: products.map(publicProduct) });
   }),
@@ -227,7 +227,12 @@ async function productPayload(body, existing) {
     body.comparePrice || body.price,
     "Previous price",
   );
-  const deliveryFee = cleanMoney(body.deliveryFee, "Delivery fee");
+  const deliveryFee = cleanMoney(
+    body.deliveryFee === "" || body.deliveryFee == null
+      ? (existing?.deliveryFee ?? 0)
+      : body.deliveryFee,
+    "Delivery fee",
+  );
   const description = cleanText(body.description, {
     name: "Description",
     min: 5,
@@ -269,15 +274,46 @@ adminRouter.patch(
     if (!mongoose.isValidObjectId(req.params.id)) {
       throw new HttpError(400, "Invalid product.");
     }
-    const existing = await Product.findById(req.params.id);
+    const existing = await Product.findById(req.params.id).lean();
     if (!existing) throw new HttpError(404, "Product not found.");
-    const product = await Product.findByIdAndUpdate(
-      req.params.id,
-      { $set: await productPayload(req.body, existing) },
-      { returnDocument: "after", runValidators: true },
+    const storedVersion = Number.isInteger(existing.__v) ? existing.__v : 0;
+    const expectedVersion =
+      req.body.version == null || req.body.version === ""
+        ? storedVersion
+        : cleanInteger(req.body.version, "Product version", {
+            min: 0,
+            max: 1_000_000_000,
+          });
+    if (expectedVersion !== storedVersion) {
+      throw new HttpError(
+        409,
+        "This sneaker changed while the edit form was open. Reload it and apply your changes again.",
+      );
+    }
+    const payload = await productPayload(req.body, existing);
+    const versionFilter = Number.isInteger(existing.__v)
+      ? { _id: req.params.id, __v: expectedVersion }
+      : {
+          _id: req.params.id,
+          $or: [{ __v: { $exists: false } }, { __v: null }],
+        };
+    const writeResult = await Product.updateOne(
+      versionFilter,
+      { $set: payload, $inc: { __v: 1 } },
+      { runValidators: true },
     );
+    if (!writeResult.acknowledged || writeResult.matchedCount !== 1) {
+      throw new HttpError(
+        409,
+        "The sneaker could not be saved. Reload it and try again.",
+      );
+    }
+
+    // Do not report success from the submitted payload. Read the stored record
+    // back from MongoDB so the response proves the edit actually persisted.
+    const product = await Product.findById(req.params.id).lean();
     if (!product) throw new HttpError(404, "Product not found.");
-    res.json({ product: publicProduct(product) });
+    res.json({ product: publicProduct(product), persisted: true });
   }),
 );
 
